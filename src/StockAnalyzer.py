@@ -46,12 +46,15 @@ def has_sufficient_history(ticker, min_years=5):
     except Exception as e:
         print(f"Error checking {ticker}: {e}")
         return False
+    
+valid_stocks = []
+for symbol in filtered_stocks["Symbol"]: 
+    if has_sufficient_history(symbol, min_years=5):
+        valid_stocks.append(symbol)
+    if len(valid_stocks) >= 50:
+        break
 
-for symbol in filtered_stocks["Symbol"][:50]: 
-    if not has_sufficient_history(symbol, min_years=5):
-        print(f"Skipping {symbol} - not old enough")
-        continue
-
+for symbol in valid_stocks:
     try:
         print(f"Downloading {symbol}...")
         data = yf.download(
