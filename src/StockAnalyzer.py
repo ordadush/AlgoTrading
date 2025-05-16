@@ -16,7 +16,7 @@ if os.path.exists(filtered_file):
     filtered_stocks = pd.read_csv(filtered_file)
 else:
     print("Filtering stock list from nasdaqlisted.csv...")
-    nasdaq_df = pd.read_csv("../nasdaqlisted.csv", sep='|')
+    nasdaq_df = pd.read_csv("nasdaqlisted.csv", sep='|')
 
     nasdaq_df['Symbol'] = nasdaq_df['Symbol'].astype(str)
     nasdaq_df['Security Name'] = nasdaq_df['Security Name'].astype(str)
