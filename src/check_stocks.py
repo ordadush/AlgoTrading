@@ -1,6 +1,12 @@
 import pandas as pd
 import os
 
+'''
+File for checking stocks data in the data folder.
+This file checks the data of stocks in the data folder.
+It checks if the stocks have enough data for backtesting and if they are still trading.
+'''
+
 # הגדרת הנתיב של התיקייה
 data_path = "data"
 

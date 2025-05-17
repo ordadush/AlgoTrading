@@ -1,6 +1,10 @@
-from sqlalchemy import Column, Integer, String, Float, Date
+from sqlalchemy import Column, Integer, String, Float, Date, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 
+'''
+File for defining the database models.
+This file defines the database models using SQLAlchemy ORM.
+'''
 Base = declarative_base()
 
 class StockPrice(Base):
@@ -13,3 +17,4 @@ class StockPrice(Base):
     high = Column(Float)
     low = Column(Float)
     close = Column(Float)
+    volume = Column(BigInteger, nullable=True)
