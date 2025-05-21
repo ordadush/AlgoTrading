@@ -1,16 +1,19 @@
 from database import SessionLocal
 from models import StockPrice
 import pandas as pd
+from sqlalchemy.orm import Session
+from database import engine
+from models import Base
+
 
 def save_dataframe_to_db(symbol, df):
+
     session = SessionLocal()
-    
+    Base.metadata.create_all(bind=engine)
+
     df = df.copy()
+    symbol = symbol.upper()
     
-    # הדפסת העמודות לצורך דיבאג
-    print(f"DataFrame columns in save_dataframe_to_db: {df.columns.tolist()}")
-    
-    # בדיקה מהו שם עמודת התאריך
     date_column = None
     for col in df.columns:
         if col in ['Date', 'Datetime', 'date', 'datetime']:
@@ -23,20 +26,13 @@ def save_dataframe_to_db(symbol, df):
         session.close()
         return
     
-    # המרת עמודת תאריך לפורמט datetime (אם היא לא כבר בפורמט זה)
     df[date_column] = pd.to_datetime(df[date_column])
     
-    # בדיקת ריקון
     if df.empty:
         print(f"❌ DataFrame for {symbol} is empty.")
         session.close()
         return
     
-    # הדפסת דוגמה של נתונים לצורך דיבאג
-    print(f"Sample data for {symbol} in save_dataframe_to_db:")
-    print(df.head(1).to_string())
-    
-    # בדיקה אם כל העמודות הדרושות קיימות
     required_columns = ["Open", "High", "Low", "Close"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     
@@ -48,6 +44,15 @@ def save_dataframe_to_db(symbol, df):
     records_added = 0
     for idx, row in df.iterrows():
         try:
+
+            exists = session.query(StockPrice).filter_by(
+                symbol=symbol,
+                date=row[date_column].date()
+            ).first()
+
+            if exists:
+                continue 
+            
             stock_data = {
                 'symbol': symbol,
                 'date': row[date_column].date(),
@@ -57,7 +62,6 @@ def save_dataframe_to_db(symbol, df):
                 'close': float(row["Close"]),
             }
             
-            # הוספת Volume אם קיים
             if 'Volume' in df.columns:
                 stock_data['volume'] = int(row["Volume"]) if not pd.isna(row["Volume"]) else None
             
@@ -65,7 +69,6 @@ def save_dataframe_to_db(symbol, df):
             session.add(stock)
             records_added += 1
             
-            # Commit בקבוצות של 100 רשומות לחסוך בזיכרון
             if records_added % 100 == 0:
                 session.commit()
                 print(f"Committed {records_added} records so far for {symbol}")
@@ -75,7 +78,6 @@ def save_dataframe_to_db(symbol, df):
             continue
     
     try:
-        # Commit סופי אם נשארו רשומות
         if records_added % 100 != 0:
             session.commit()
         print(f"✅ {symbol} saved successfully. Total records: {records_added}")
@@ -84,3 +86,19 @@ def save_dataframe_to_db(symbol, df):
         print(f"❌ Error saving {symbol} to DB: {e}")
     finally:
         session.close()
+
+def delete_all_stock_data():
+    with Session(engine) as session:
+        session.query(StockPrice).delete()
+        session.commit()
+        print("✅ All stock price data deleted.")
+
+def preview_data():
+
+    session = SessionLocal()
+    results = session.query(StockPrice).limit(5).all()
+    for row in results:
+        print(row.symbol, row.date, row.close)
+
+if __name__ == "__main__":
+    delete_all_stock_data()

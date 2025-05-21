@@ -5,49 +5,61 @@ from datetime import datetime, timedelta
 import os
 import time
 
-'''
-Rewritten stockAnalyzer to save directly into the Railway database.
-''' 
 
 # Dates for data range
 end_date = datetime.now()  # Using current date instead of fixed date
-start_date = end_date - timedelta(days=365 * 5)  # 5 years of data
-
+start_date = end_date - timedelta(days=365 * 10)  # 5 years of data
 # Filtered list preparation
 filtered_file = "../filtered_nasdaq.csv"
 
-if os.path.exists(filtered_file):
-    print("Loading filtered stock list...")
-    filtered_stocks = pd.read_csv(filtered_file)
-else:
-    print("Filtering stock list from nasdaqlisted.csv...")
-    try:
-        nasdaq_df = pd.read_csv("nasdaqlisted.csv", sep='|')
-    except FileNotFoundError:
-        print("Error: nasdaqlisted.csv file not found.")
-        print("Please download it from: https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt")
-        print("And save it as nasdaqlisted.csv after removing the last line")
-        exit(1)
+def make_filltered_file():
+    # Create a filtered file if it doesn't exist
+    if os.path.exists(filtered_file):
+        print("Loading filtered stock list...")
+        filtered_stocks = pd.read_csv(filtered_file)
+    
+    else:
+        print("Filtering stock list from nasdaqlisted.csv...")
+        try:
+            nasdaq_df = pd.read_csv("nasdaqlisted.csv", sep='|')
+        except FileNotFoundError:
+            print("Error: nasdaqlisted.csv file not found.")
+            print("Please download it from: https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt")
+            print("And save it as nasdaqlisted.csv after removing the last line")
+            exit(1)
 
-    nasdaq_df['Symbol'] = nasdaq_df['Symbol'].astype(str)
-    nasdaq_df['Security Name'] = nasdaq_df['Security Name'].astype(str)
+        nasdaq_df['Symbol'] = nasdaq_df['Symbol'].astype(str)
+        nasdaq_df['Security Name'] = nasdaq_df['Security Name'].astype(str)
 
-    filtered_stocks = nasdaq_df[
-        (nasdaq_df['ETF'] != 'Y') &
-        (nasdaq_df['Test Issue'] != 'Y') &
-        (~nasdaq_df['Symbol'].str.contains(r'[.\-/]', na=False)) &
-        (~nasdaq_df['Security Name'].str.contains("Warrant|Right|Unit", case=False, na=False))
-    ]
+        filtered_stocks = nasdaq_df[
+            (nasdaq_df['ETF'] != 'Y') &
+            (nasdaq_df['Test Issue'] != 'Y') &
+            (~nasdaq_df['Symbol'].str.contains(r'[.\-/]', na=False)) &
+            (~nasdaq_df['Security Name'].str.contains("Warrant|Right|Unit", case=False, na=False))
+        ]
 
-    filtered_stocks.to_csv(filtered_file, index=False)
-    print(f"Saved filtered list to {filtered_file}")
+        filtered_stocks.to_csv(filtered_file, index=False)
+        print(f"Saved filtered list to {filtered_file}")
+        
+    
+    return filtered_stocks
 
-def has_sufficient_history(ticker, min_years=5):
+def has_sufficient_volume(hist, min_volume=100000):
+
+    if 'Close' not in df.columns or 'Volume' not in df.columns:
+        return False
+
+    df = df.copy()
+    df['dollar_volume'] = df['Close'] * df['Volume'] * 1000  
+    avg_volume = df['dollar_volume'].mean()
+    return avg_volume >= min_volume
+
+def valid_stock(ticker, min_years=10, min_value=0.01):
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="max")
 
-        if hist.empty:
+        if hist.empty or not has_sufficient_volume(hist):
             return False
 
         first_date = hist.index[0].to_pydatetime().replace(tzinfo=None)
@@ -58,25 +70,19 @@ def has_sufficient_history(ticker, min_years=5):
         print(f"Error checking {ticker}: {e}")
         return False
 
-# Collect valid stocks
-MAX_STOCKS = 5  # הקטנת מספר המניות לבדיקה בלבד
+MAX_STOCKS = 1500  
 valid_stocks = []
-checked_count = 0
 
+filtered_stocks = make_filltered_file()
 print(f"Finding stocks with sufficient history...")
 for symbol in filtered_stocks["Symbol"]:
-    checked_count += 1
-    if has_sufficient_history(symbol, min_years=5):
+    if valid_stock(symbol):
         valid_stocks.append(symbol)
         print(f"Found valid stock: {symbol} ({len(valid_stocks)}/{MAX_STOCKS})")
-    
-    if checked_count % 10 == 0:
-        print(f"Checked {checked_count} stocks so far...")
     
     if len(valid_stocks) >= MAX_STOCKS:
         break
 
-print(f"Found {len(valid_stocks)} valid stocks out of {checked_count} checked")
 
 # Download and save to DB
 for i, symbol in enumerate(valid_stocks):
@@ -90,46 +96,28 @@ for i, symbol in enumerate(valid_stocks):
         )
 
         if not data.empty:
-            # חשוב מאוד: ודא שזה DataFrame רגיל עם המבנה הנכון
-            print(f"Original data shape: {data.shape}")
-            print(f"Original data columns: {data.columns}")
-            print(f"Original data index: {type(data.index)}")
-            print(f"First row sample: {data.iloc[0]}")
             
-            # כאן טיפול מיוחד לשמירת התאריכים כעמודה וקביעת שמות העמודות
             data_processed = data.copy()
-            data_processed.reset_index(inplace=True)  # הפיכת התאריך לעמודה
+            data_processed.reset_index(inplace=True)  
             
-            # אם השמות של העמודות הם MultiIndex, אנחנו נפריד אותם בצורה נכונה
             if isinstance(data_processed.columns, pd.MultiIndex):
-                # יצירת שמות עמודות חדשים
                 new_cols = []
                 for col in data_processed.columns:
                     if isinstance(col, tuple) and len(col) > 1:
-                        # הערכים הסטנדרטיים של yfinance הם ('Open', symbol), ('High', symbol) וכו'
-                        if col[0] != '':  # זה עבור המקרה שזה לא שם העמודה הראשונה (Date)
-                            new_cols.append(col[0])  # לוקח רק את השם הראשון (Open, High...)
+                        if col[0] != '':  
+                            new_cols.append(col[0])  
                         else:
-                            new_cols.append('Date')  # אם זה ריק זה כנראה עמודת התאריך
+                            new_cols.append('Date')  
                     else:
-                        new_cols.append(col)  # משאיר כמו שהוא אם זה לא tuple
+                        new_cols.append(col)  
                 
                 data_processed.columns = new_cols
-            
-            print(f"Processed data columns: {data_processed.columns.tolist()}")
-            print(f"Sample data after processing:")
-            print(data_processed.head(1).to_string())
             
             save_dataframe_to_db(symbol, data_processed)
         else:
             print(f"No data for {symbol}.")
 
-        # Sleep a bit to avoid rate limiting
-        if i < len(valid_stocks) - 1:
-            time.sleep(1)
-
     except Exception as e:
         print(f"❌ Failed to download {symbol}: {e}")
-        # הדפסת מידע נוסף בעת שגיאה
         import traceback
         traceback.print_exc()
