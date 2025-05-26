@@ -10,8 +10,9 @@ import os
 import time
 
 # Set date range (last 10 years)
-end_date = datetime.now()
-start_date = end_date - timedelta(days=365 * 10)
+BUFFER_DAYS = 250  # לפי האינדיקטור הכי ארוך שתשתמשו בו
+start_date = end_date - timedelta(days=(365 * 10 + BUFFER_DAYS))
+
 
 # CSV path for filtered symbols
 filtered_file = "../filtered_nasdaq.csv"
