@@ -114,3 +114,39 @@ def preview_data():
 
 if __name__ == "__main__":
     delete_all_stock_data()
+
+
+def save_macd_to_db(symbol, df):
+    """
+    Persists macd, signal, hist columns from a DataFrame into stock_factors.
+    Assumes df has columns ['Date','macd','signal','hist'] after add_macd().
+    """
+    session = SessionLocal()
+    records_added = 0
+
+    for _, row in df.iterrows():
+        exists = session.query(StockFactor).filter_by(
+            symbol=symbol,
+            date=row['Date'].date()
+        ).first()
+        if exists:
+            continue
+
+        factor = StockFactor(
+            symbol=symbol,
+            date=row['Date'].date(),
+            macd=row['macd'],
+            signal=row['signal'],
+            hist=row['hist']
+        )
+        session.add(factor)
+        records_added += 1
+        if records_added % 100 == 0:
+            session.commit()
+
+    if records_added % 100 != 0:
+        session.commit()
+    print(f"✅ MACD saved for {symbol}: {records_added} rows")
+    session.close()
+
+
