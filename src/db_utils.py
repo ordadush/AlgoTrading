@@ -49,13 +49,15 @@ def save_dataframe_to_db(symbol, df):
     records_added = 0
     for idx, row in df.iterrows():
         try:
-            exists = session.query(StockPrice).filter_by(
-                symbol=symbol,
-                date=row[date_column].date()
-            ).first()
 
-            if exists:
-                continue 
+            #remove comments after initial download
+            # exists = session.query(StockPrice).filter_by
+            #     symbol=symbol,
+            #     date=row[date_column].date()
+            # ).first()
+
+            # if exists:
+            #     continue 
             
             stock_data = {
                 'symbol': symbol,

@@ -10,9 +10,8 @@ import os
 import time
 
 # Set date range (last 10 years)
-buffer_days = 250  # לפי האינדיקטור הכי ארוך שתשתמשו בו
-start_date = end_date - timedelta(days=(365 * 10 + buffer_days))
-
+end_date = end_date = datetime(2024, 12, 31)
+start_date = end_date - timedelta(days=365 * 10)
 
 # CSV path for filtered symbols
 filtered_file = "../filtered_nasdaq.csv"
@@ -25,7 +24,7 @@ def make_filltered_file():
     """
     if os.path.exists(filtered_file):
         print("Loading filtered stock list...")
-        filtered_stocks = pd.read_csv(filtered_file)
+        filtered_stocks = pd.read_csv(filtered_file, on_bad_lines='skip')
     
     else:
         print("Filtering stock list from nasdaqlisted.csv...")
@@ -71,6 +70,10 @@ def valid_stock(ticker, min_years=10, min_value=0.01):
     Returns: True if the stock passes all filters, else False.
     """
     try:
+
+        if pd.isna(ticker) or ticker == "":
+            return False
+        
         stock = yf.Ticker(ticker)
         hist = stock.history(period="max")
 
