@@ -20,7 +20,7 @@ df = df.rename(columns={
 })
 
 # המרת תאריך
-df["Date"] = pd.to_datetime(df["Date"], format="%b %d, %Y")
+df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y")
 
 # המרת עמודות מספריות
 for col in ["Open", "High", "Low", "Close"]:
