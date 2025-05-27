@@ -10,8 +10,8 @@ import os
 import time
 
 # Set date range (last 10 years)
-BUFFER_DAYS = 250  # לפי האינדיקטור הכי ארוך שתשתמשו בו
-start_date = end_date - timedelta(days=(365 * 10 + BUFFER_DAYS))
+buffer_days = 250  # לפי האינדיקטור הכי ארוך שתשתמשו בו
+start_date = end_date - timedelta(days=(365 * 10 + buffer_days))
 
 
 # CSV path for filtered symbols
