@@ -30,4 +30,19 @@ for file_name in sector_files:
     # המרת תאריך
     df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y")
 
-    # המרת עמודות מס
+    # המרת עמודות מספריות
+    for col in ["Open", "High", "Low", "Close"]:
+        df[col] = df[col].replace(",", "", regex=True).astype(float)
+
+    # ניקוי עמודת Volume
+    df["Volume"] = df["Volume"].replace(",", "", regex=True)
+    df["Volume"] = df["Volume"].replace("K", "e3", regex=True).replace("M", "e6", regex=True).replace("B", "e9", regex=True)
+    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce")
+
+    # 🟢 הוספת העמודה symbol – זאת השורה שאמרתי קודם:
+    df["symbol"] = symbol
+
+    # 🆕 כאן שימי את ההדפסות:
+    print(f"📥 מנסה לשמור {symbol} ל-DB...")
+    save_dataframe_to_db(symbol, df)
+    print(f"✅ {symbol} נשמר בהצלחה!")
