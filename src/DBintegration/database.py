@@ -4,8 +4,8 @@
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Base
-from models import StockPrice
+from DBintegration.models import Base
+from DBintegration.models import StockPrice
 from dotenv import load_dotenv
 from pathlib import Path
 import os
