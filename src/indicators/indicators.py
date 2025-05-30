@@ -10,5 +10,12 @@ from sqlalchemy.orm import sessionmaker
 from DBintegration.models import Base
 from pathlib import Path
 import pandas as pd
+#filters out the ETFs 
 df = model_to_dataframe(StockPrice)
-print(df)
+org_len = len(df)
+symbols = ['^GSPC','XLC','XLY','XLP','XLE','XLF','XLV','XLI','XLB','XLRE','XLK','XLU']
+df_market    = df[df['symbol'].isin(symbols)].reset_index(drop=True)
+df_sectors = df[~df['symbol'].isin(symbols)].reset_index(drop=True)
+print(org_len)
+print("With symbols:   ", len(df_market))
+print("Without symbols:", len(df_sectors))
