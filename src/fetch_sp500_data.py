@@ -1,3 +1,6 @@
+# This script fetches full historical daily data for the S&P 500 index using the SPY ETF from Alpha Vantage.
+# It filters the data by date range (2014–2024), cleans it, and stores it into a PostgreSQL database.
+
 import os
 from alpha_vantage.timeseries import TimeSeries
 from DBintegration.database import SessionLocal
@@ -5,7 +8,6 @@ from DBintegration.models import SP500Index
 from dotenv import load_dotenv
 import pandas as pd
 
-# טען משתני סביבה
 load_dotenv()
 
 API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
@@ -17,7 +19,7 @@ def fetch_and_store_sp500_data():
 
     print("Fetching full daily data for S&P 500 via SPY ETF")
     try:
-        # במקום ^GSPC נשתמש ב-SPY
+        # Use SPY ETF as proxy for S&P 500 index
         data, meta_data = ts.get_daily(symbol='SPY', outputsize='full')
     except Exception as e:
         print(f"Error fetching data from Alpha Vantage: {e}")
@@ -27,11 +29,11 @@ def fetch_and_store_sp500_data():
         print("No data fetched from Alpha Vantage.")
         return
 
-    # סינון לפי טווח תאריכים רצוי
+    # Ensure the index is sorted before slicing by date
     data = data.sort_index()
     data = data.loc["2014-01-01":"2024-12-31"]
 
-    # שינוי שמות עמודות
+    # Rename columns to match internal schema
     data = data.rename(columns={
         '1. open': 'Open',
         '2. high': 'High',
