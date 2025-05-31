@@ -22,14 +22,23 @@ class StockPrice(Base):
 class SP500Index(Base):
     __tablename__ = 'sp500_index'
 
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date, index=True, unique=True)
+    date = Column(Date, primary_key=True, index=True) 
     open = Column(Float)
     high = Column(Float)
     low = Column(Float)
     close = Column(Float)
     volume = Column(BigInteger, nullable=True)
     
+    ema_50 = Column(Float, nullable=True)
+    ema_200 = Column(Float, nullable=True)
+    rsi = Column(Float, nullable=True)
+    macd = Column(Float, nullable=True)
+    macd_signal = Column(Float, nullable=True)
+    atr = Column(Float, nullable=True)
+    obv = Column(BigInteger, nullable=True)
+    market_score = Column(Integer, nullable=True)
+    market_trend = Column(Float, nullable=True)
+
 
 def __init__(self, **kwargs):
     """
