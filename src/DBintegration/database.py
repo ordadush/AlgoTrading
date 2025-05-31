@@ -4,8 +4,7 @@
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from DBintegration.models import Base
-from DBintegration.models import StockPrice
+from DBintegration import models
 from dotenv import load_dotenv
 from pathlib import Path
 import os
@@ -25,7 +24,7 @@ def test_connection():
     Tries to create all tables and confirms database connection.
     """
     try:
-        Base.metadata.create_all(bind=engine) 
+        models.Base.metadata.create_all(bind=engine)
         print("all good!")
     except Exception as e:
         print(f"something bad happend: {e}")
