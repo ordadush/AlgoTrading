@@ -1,11 +1,40 @@
 # db_utils.py
 # Contains utility functions for saving stock data to the database and previewing or clearing data.
+
+import sys
+import os
 import pandas as pd
+from dotenv import load_dotenv
+from pathlib import Path
+
+# הוספת תיקיית src ל-Python path, כדי שיוכל לייבא מ-DBintegration
+sys.path.append(str(Path(__file__).resolve().parents[1]))  # זו תיקיית src
+
+# הגדרת נתיב מדויק ל-.env בתיקיית Algo_env
+env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
+load_dotenv(dotenv_path=env_path)
+
+import os
+
+API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
+if not API_KEY:
+    raise ValueError("Missing ALPHAVANTAGE_API_KEY in environment variables")
+
+
 from DBintegration.database import SessionLocal
-from DBintegration.models import StockPrice
-from sqlalchemy.orm import Session
 from DBintegration.database import engine
+from DBintegration.models import StockPrice
+from DBintegration.models import SP500Index
+from DBintegration.models import SectorData
+from DBintegration.models import DailyStockData
 from DBintegration.models import Base
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import DeclarativeMeta
+from sqlalchemy import delete
+from alpha_vantage.timeseries import TimeSeries
+import pandas as pd
+
+
 
 def update_data(model, df):
     """
@@ -99,54 +128,23 @@ def model_to_dataframe(model_class): ###input: model, output:
     finally:
         session.close()
 
-def delete_all_stock_data():
+def delete_all_rows(model: DeclarativeMeta):
     """
-    Deletes all rows from the stock_prices table.
-    """
-    with Session(engine) as session:
-        session.query(StockPrice).delete()
-        session.commit()
-        print("✅ All stock price data deleted.")
+    Deletes all rows from the table associated with the given SQLAlchemy model class.
 
-    """
-    Prints the first 5 records from the stock_prices table.
+    Parameters:
+        model (DeclarativeMeta): A SQLAlchemy model class.
     """
     session = SessionLocal()
-    results = session.query(StockPrice).limit(5).all()
-    for row in results:
-        print(row.symbol, row.date, row.close)
-
-    """
-    Persists macd, signal, hist columns from a DataFrame into stock_factors.
-    Assumes df has columns ['Date','macd','signal','hist'] after add_macd().
-    """
-    session = SessionLocal()
-    records_added = 0
-
-    for _, row in df.iterrows():
-        exists = session.query(StockFactor).filter_by(
-            symbol=symbol,
-            date=row['Date'].date()
-        ).first()
-        if exists:
-            continue
-
-        factor = StockFactor(
-            symbol=symbol,
-            date=row['Date'].date(),
-            macd=row['macd'],
-            signal=row['signal'],
-            hist=row['hist']
-        )
-        session.add(factor)
-        records_added += 1
-        if records_added % 100 == 0:
-            session.commit()
-
-    if records_added % 100 != 0:
+    try:
+        session.execute(delete(model))
         session.commit()
-    print(f"✅ MACD saved for {symbol}: {records_added} rows")
-    session.close()
+        print(f"All rows deleted from {model.__tablename__}")
+    except Exception as e:
+        session.rollback()
+        print(f"Error deleting rows from {model.__tablename__}: {e}")
+    finally:
+        session.close()
 
 def save_dataframe_to_db(symbol, df):
     """
@@ -233,6 +231,91 @@ def save_dataframe_to_db(symbol, df):
         print(f"❌ Error saving {symbol} to DB: {e}")
     finally:
         session.close()
-        
+
+def fetch_and_store_data(symbol: str, model: str):
+    """
+    Fetches full daily historical data for a given symbol (stock or index or sector),
+    processes the data, and stores it into the appropriate database table
+    based on the given model.
+
+    Parameters:
+        symbol (str): The stock/index symbol to fetch .
+        model (str): 'index' to store in SP500Index, 'stock' to store in DailyStockData, 'sector
+                    'sector' to store in SectorData."""
+    
+    if model not in ['index', 'stock', 'sector']:
+        raise ValueError("Model must be either 'index', 'stock', or 'sector'.")
+    
+    ts = TimeSeries(key=API_KEY, output_format='pandas')
+
+    print(f"Fetching full daily data for {symbol}")
+    try:
+        data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
+    except Exception as e:
+        print(f"Error fetching data for {symbol}: {e}")
+        return
+
+    if data.empty:
+        print(f"No data fetched for {symbol}.")
+        return
+
+    data = data.sort_index()
+    data = data.loc["2013-01-01":"2024-12-31"]
+
+    data = data.rename(columns={
+        '1. open': 'Open',
+        '2. high': 'High',
+        '3. low': 'Low',
+        '4. close': 'Close',
+        '5. volume': 'Volume'
+    })
+
+    session = SessionLocal()
+    try:
+        for date, row in data.iterrows():
+            volume = row['Volume']
+            volume = int(volume) if not pd.isna(volume) else None
+
+            if model == 'index':
+                entry = SP500Index(
+                    date=date.date(),
+                    open=round(float(row['Open']), 2),
+                    high=round(float(row['High']), 2),
+                    low=round(float(row['Low']), 2),
+                    close=round(float(row['Close']), 2),
+                    volume=volume
+                )
+            elif model == 'stock':
+                entry = DailyStockData(
+                    symbol=symbol,
+                    date=date.date(),
+                    open=round(float(row['Open']), 2),
+                    high=round(float(row['High']), 2),
+                    low=round(float(row['Low']), 2),
+                    close=round(float(row['Close']), 2),
+                    volume=volume
+                )
+            elif model == 'sector':
+                entry = SectorData(
+                    symbol=symbol,
+                    date=date.date(),
+                    open=round(float(row['Open']), 2),
+                    high=round(float(row['High']), 2),
+                    low=round(float(row['Low']), 2),
+                    close=round(float(row['Close']), 2),
+                    volume=volume
+                )
+            else:
+                raise ValueError("Model must be either 'index' or 'stock'.")
+
+            session.merge(entry)
+        session.commit()
+        print(f"{symbol} data saved to database in '{model}' model.")
+    except Exception as e:
+        session.rollback()
+        print(f"Error inserting data for {symbol}: {e}")
+    finally:
+        session.close()
+
 if __name__ == "__main__":
-    delete_all_stock_data()
+   delete_all_rows(StockPrice)
