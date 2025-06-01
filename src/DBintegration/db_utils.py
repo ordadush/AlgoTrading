@@ -33,6 +33,8 @@ from sqlalchemy.orm import DeclarativeMeta
 from sqlalchemy import delete
 from alpha_vantage.timeseries import TimeSeries
 import pandas as pd
+import yfinance as yf
+
 
 
 
@@ -187,16 +189,7 @@ def save_dataframe_to_db(symbol, df):
     records_added = 0
     for idx, row in df.iterrows():
         try:
-
-            #remove comments after initial download
-            # exists = session.query(StockPrice).filter_by
-            #     symbol=symbol,
-            #     date=row[date_column].date()
-            # ).first()
-
-            # if exists:
-            #     continue 
-            
+   
             stock_data = {
                 'symbol': symbol,
                 'date': row[date_column].date(),
@@ -317,5 +310,50 @@ def fetch_and_store_data(symbol: str, model: str):
     finally:
         session.close()
 
+def fetch_and_store_sector_etfs(etf_list=None):
+    """
+    Fetches and stores historical daily OHLCV data for a list of sector ETFs
+    from Alpha Vantage into the 'sector_data' table in the database.
+    """
+    if etf_list is None:
+        etf_list = ["XLF", "XLK", "XLE", "XLI", "XLY", "XLV", "XLP", "XLU", "XLC", "XLRE", "XLB"]
+
+    ts = TimeSeries(key=API_KEY, output_format='pandas')
+
+    for symbol in etf_list:
+        try:
+            print(f"📥 Fetching data for {symbol}...")
+            data, meta = ts.get_daily(symbol=symbol, outputsize='full')
+
+            if data.empty:
+                print(f"⚠️ No data returned for {symbol}")
+                continue
+
+            data = data.sort_index()
+            data = data.loc["2013-01-01":"2024-12-31"]
+
+            data = data.rename(columns={
+                '1. open': 'open',
+                '2. high': 'high',
+                '3. low': 'low',
+                '4. close': 'close',
+                '5. volume': 'volume'
+            })
+
+            data = data.reset_index()
+            data = data.rename(columns={"date": "date"})  # for clarity
+            data["symbol"] = symbol
+            data["date"] = pd.to_datetime(data["date"]).dt.date
+
+            df = data[["date", "open", "high", "low", "close", "volume", "symbol"]].copy()
+
+            update_data(SectorData, df)
+            print(f"✅ {symbol} saved to DB.")
+
+        except Exception as e:
+            print(f"❌ Error processing {symbol}: {e}")
+
+
+
 if __name__ == "__main__":
-   delete_all_rows(DailyStockData)
+   fetch_and_store_sector_etfs()
