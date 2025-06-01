@@ -3,7 +3,14 @@
 
 from sqlalchemy import Column, Integer, String, Float, Date, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
+from dotenv import load_dotenv
+from pathlib import Path
+import os
 
+env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
+load_dotenv(dotenv_path=env_path)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 Base = declarative_base()
 
 class StockPrice(Base):
@@ -49,7 +56,6 @@ class SP500Index(Base):
     market_score = Column(Integer, nullable=True)
     market_trend = Column(Float, nullable=True)
 
-
 class DailyStockData(Base):
     __tablename__ = 'daily_stock_data'
 
@@ -65,8 +71,8 @@ class DailyStockData(Base):
 class SectorData(Base):
     __tablename__ = 'sector_data'
 
-    sector = Column(String, primary_key=True)
-    date = Column(Date, primary_key=True)
+    symbol = Column(String, primary_key=True)
+    date = Column(Date, primary_key=True, index=True)
     open = Column(Float)
     high = Column(Float)
     low = Column(Float)
@@ -82,7 +88,6 @@ class SectorData(Base):
     obv = Column(BigInteger, nullable=True)
     market_score = Column(Integer, nullable=True)
     market_trend = Column(Float, nullable=True)
-
 
     def __init__(self, **kwargs):
         """

@@ -6,6 +6,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from DBintegration import models
+from DBintegration.models import Base
 from dotenv import load_dotenv
 
 
@@ -24,5 +25,9 @@ def test_connection():
     except Exception as e:
         print(f"❌ something bad happened: {e}")
 
+def create_all_tables():
+    Base.metadata.create_all(bind=engine)
+    print("✅ All tables created or verified.")
+
 if __name__ == "__main__":
-    test_connection()
+    create_all_tables()

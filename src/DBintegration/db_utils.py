@@ -318,4 +318,4 @@ def fetch_and_store_data(symbol: str, model: str):
         session.close()
 
 if __name__ == "__main__":
-   delete_all_rows(StockPrice)
+   delete_all_rows(DailyStockData)
