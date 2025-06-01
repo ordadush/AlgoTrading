@@ -99,7 +99,6 @@ def model_to_dataframe(model_class): ###input: model, output:
     finally:
         session.close()
 
-
 def delete_all_stock_data():
     """
     Deletes all rows from the stock_prices table.
@@ -109,7 +108,6 @@ def delete_all_stock_data():
         session.commit()
         print("✅ All stock price data deleted.")
 
-def preview_data():
     """
     Prints the first 5 records from the stock_prices table.
     """
@@ -118,11 +116,6 @@ def preview_data():
     for row in results:
         print(row.symbol, row.date, row.close)
 
-if __name__ == "__main__":
-    delete_all_stock_data()
-
-
-def save_macd_to_db(symbol, df):
     """
     Persists macd, signal, hist columns from a DataFrame into stock_factors.
     Assumes df has columns ['Date','macd','signal','hist'] after add_macd().
@@ -241,4 +234,5 @@ def save_dataframe_to_db(symbol, df):
     finally:
         session.close()
         
-
+if __name__ == "__main__":
+    delete_all_stock_data()

@@ -38,7 +38,7 @@ class SP500Index(Base):
     low = Column(Float)
     close = Column(Float)
     volume = Column(BigInteger, nullable=True)
-    
+
     ema_50 = Column(Float, nullable=True)
     ema_200 = Column(Float, nullable=True)
     rsi = Column(Float, nullable=True)
@@ -48,18 +48,6 @@ class SP500Index(Base):
     obv = Column(BigInteger, nullable=True)
     market_score = Column(Integer, nullable=True)
     market_trend = Column(Float, nullable=True)
-
-class AllStock(Base):
-    __tablename__ = "all_stocks"
-
-    symbol = Column(String, primary_key=True, index=True)
-    security_name = Column(String)
-    market_category = Column(String)
-    test_issue = Column(String)
-    financial_status = Column(String)
-    round_lot_size = Column(String)
-    etf = Column(String)
-    next_shares = Column(String)
 
 
 class DailyStockData(Base):
