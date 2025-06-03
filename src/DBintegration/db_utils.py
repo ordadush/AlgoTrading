@@ -36,8 +36,6 @@ import pandas as pd
 import yfinance as yf
 
 
-
-
 def update_data(model, df):
     """
     Updates the database with only the changes in the DataFrame.
@@ -353,7 +351,5 @@ def fetch_and_store_sector_etfs(etf_list=None):
         except Exception as e:
             print(f"❌ Error processing {symbol}: {e}")
 
-
-
 if __name__ == "__main__":
-   fetch_and_store_sector_etfs()
+   pass
