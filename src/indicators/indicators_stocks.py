@@ -1,3 +1,20 @@
+# generate_stock_indicators.py
+# -------------------------------------------------------------
+# This script calculates technical indicators for each stock in
+# the 'daily_stock_data' table based on historical OHLCV data.
+#
+# Indicators calculated:
+# - EMA (20, 50, 200)
+# - MACD and MACD signal
+# - RSI (14)
+# - ATR (Average True Range)
+# - OBV (On-Balance Volume)
+# - Daily and 14-day returns
+#
+# The results are saved back into the same table for each stock
+# and date combination using SQLAlchemy ORM.
+# -------------------------------------------------------------
+
 import pandas as pd
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
@@ -7,6 +24,13 @@ from ta.volume import OnBalanceVolumeIndicator
 from DBintegration.database import SessionLocal
 from DBintegration.models import DailyStockData
 
+# -------------------------------------------------------------
+# compute_indicators(df: pd.DataFrame) -> pd.DataFrame
+# -------------------------------------------------------------
+# Input:  A DataFrame of OHLCV data for a specific stock, indexed by date.
+# Output: The same DataFrame with additional technical indicator columns.
+# Purpose: Calculate common technical indicators for trend, momentum,
+#          and volatility, and attach them to the stock's historical data.
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.index = pd.to_datetime(df.index).tz_localize(None)
@@ -26,9 +50,15 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["daily_return"] = df["close"].pct_change()
     df["rolling_return_14"] = df["close"].pct_change(periods=14)
+
     return df
 
-
+# -------------------------------------------------------------
+# load_all_symbols() -> list
+# -------------------------------------------------------------
+# Input:  None
+# Output: A list of unique stock symbols from the database.
+# Purpose: Retrieve all distinct stock symbols from the 'daily_stock_data' table.
 def load_all_symbols() -> list:
     session = SessionLocal()
     try:
@@ -36,7 +66,12 @@ def load_all_symbols() -> list:
     finally:
         session.close()
 
-
+# -------------------------------------------------------------
+# load_stock_data(symbol: str) -> pd.DataFrame
+# -------------------------------------------------------------
+# Input:  A stock symbol (str)
+# Output: DataFrame with OHLCV data for that symbol
+# Purpose: Fetch historical data for a specific stock from the database.
 def load_stock_data(symbol: str) -> pd.DataFrame:
     session = SessionLocal()
     try:
@@ -54,13 +89,24 @@ def load_stock_data(symbol: str) -> pd.DataFrame:
     finally:
         session.close()
 
-
+# -------------------------------------------------------------
+# _cast(x, is_int=False) -> Optional[int|float]
+# -------------------------------------------------------------
+# Input:  A value x (float or NaN), and a boolean flag if it should be int
+# Output: Cleaned and type-cast value (float or int), or None if NaN
+# Purpose: Ensure safe values for inserting into the database without NaN issues.
 def _cast(x, is_int=False):
     if pd.isna(x):
         return None
     return int(x) if is_int else float(x)
 
-
+# -------------------------------------------------------------
+# update_stock_indicators(symbol: str, df: pd.DataFrame)
+# -------------------------------------------------------------
+# Input:  Symbol (str), and the DataFrame with indicators for that stock
+# Output: None
+# Purpose: Merge updated indicators into the 'daily_stock_data' table
+#          by symbol and date.
 def update_stock_indicators(symbol: str, df: pd.DataFrame):
     session = SessionLocal()
     try:
@@ -87,21 +133,25 @@ def update_stock_indicators(symbol: str, df: pd.DataFrame):
             )
             session.merge(entry)
         session.commit()
-        print(f"✅ {symbol} indicators updated.")
+        print(f"{symbol} indicators updated.")
     except Exception as e:
         session.rollback()
-        print(f"❌ Error updating {symbol}: {e}")
+        print(f"Error updating {symbol}: {e}")
     finally:
         session.close()
 
-
+# -------------------------------------------------------------
+# Execution
+# -------------------------------------------------------------
+# Iterates through all distinct stock symbols, calculates technical
+# indicators for each, and stores them back into the database.
 if __name__ == "__main__":
     symbols = load_all_symbols()
     for sym in symbols:
-        print(f"🔍 Processing {sym}...")
+        print(f"Processing {sym}...")
         df = load_stock_data(sym)
         if df.empty:
-            print(f"⚠️ No data for {sym}")
+            print(f"No data for {sym}")
             continue
         enriched = compute_indicators(df)
         update_stock_indicators(sym, enriched)
