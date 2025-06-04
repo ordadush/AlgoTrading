@@ -23,7 +23,6 @@ if not API_KEY:
 
 from DBintegration.database import SessionLocal
 from DBintegration.database import engine
-from DBintegration.models import StockPrice
 from DBintegration.models import SP500Index
 from DBintegration.models import SectorData
 from DBintegration.models import DailyStockData
@@ -352,4 +351,4 @@ def fetch_and_store_sector_etfs(etf_list=None):
             print(f"❌ Error processing {symbol}: {e}")
 
 if __name__ == "__main__":
-   pass
+   fetch_and_store_data("SPY", "index")

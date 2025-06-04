@@ -1,17 +1,7 @@
 # generate_stock_indicators.py
 # -------------------------------------------------------------
-# Calculates per-stock technical indicators **and** market-relative
-# metrics, then stores them in the 'daily_stock_data' table.
-#
-# Per-stock indicators:
-#   EMA-20/50/200 • MACD (+signal) • RSI-14 • ATR • OBV
-#   Daily return • 14-day rolling return
-#
-# Market-relative metrics (vs. SP500Index):
-#   market_return_14 • relative_strength_14
-#   beta_up_20 • beta_down_20 • alpha_20
-#
-# All values are merged back into daily_stock_data via SQLAlchemy.
+# Per-stock technical indicators  +  market-relative metrics
+# Saves results back into daily_stock_data  (now via BULK INSERT)
 # -------------------------------------------------------------
 
 import pandas as pd
@@ -23,8 +13,11 @@ from ta.volume     import OnBalanceVolumeIndicator
 from DBintegration.database import SessionLocal
 from DBintegration.models   import DailyStockData, SP500Index
 
+from sqlalchemy.dialects.postgresql import insert  
+
+
 # ──────────────────────────────────────────────────────────────
-# Helper to cast values (avoids NumPy objects / NaN in SQL)
+# Cast helper  (avoids NumPy objects / NaN in SQL)
 # ──────────────────────────────────────────────────────────────
 def _cast(x, to_int=False):
     if pd.isna(x):
@@ -32,7 +25,7 @@ def _cast(x, to_int=False):
     return int(x) if to_int else float(x)
 
 # ──────────────────────────────────────────────────────────────
-# Market dataframe (SP500 close + returns)
+# Load market (SP500)  → returns
 # ──────────────────────────────────────────────────────────────
 def load_market_df() -> pd.DataFrame:
     session = SessionLocal()
@@ -44,12 +37,12 @@ def load_market_df() -> pd.DataFrame:
         session.close()
 
     mkt = mkt.sort_values("date").set_index("date")
-    mkt["daily_return_mkt"]        = mkt["close_mkt"].pct_change()
-    mkt["rolling_return_14_mkt"]   = mkt["close_mkt"].pct_change(periods=14)
+    mkt["daily_return_mkt"]      = mkt["close_mkt"].pct_change()
+    mkt["rolling_return_14_mkt"] = mkt["close_mkt"].pct_change(periods=14)
     return mkt
 
 # ──────────────────────────────────────────────────────────────
-# Stock-level OHLCV loader
+# Load OHLCV for a single symbol
 # ──────────────────────────────────────────────────────────────
 def load_stock_df(symbol: str) -> pd.DataFrame:
     session = SessionLocal()
@@ -74,12 +67,11 @@ def load_stock_df(symbol: str) -> pd.DataFrame:
     return df.sort_index()
 
 # ──────────────────────────────────────────────────────────────
-# Technical indicators per stock (EMA, MACD, RSI, ATR, OBV)
+# Technical indicators (EMA, MACD, RSI, ATR, OBV)
 # ──────────────────────────────────────────────────────────────
 def compute_stock_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df.index = pd.to_datetime(df.index).tz_localize(None)
-    df = df.sort_index()
+    df.index = pd.to_datetime(df.index).tz_localize(None).sort_values()
 
     df["ema_20"]  = EMAIndicator(df["close"], window=20).ema_indicator()
     df["ema_50"]  = EMAIndicator(df["close"], window=50).ema_indicator()
@@ -93,34 +85,31 @@ def compute_stock_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["atr"]    = AverageTrueRange(df["high"], df["low"], df["close"]).average_true_range()
     df["obv"]    = OnBalanceVolumeIndicator(df["close"], df["volume"]).on_balance_volume()
 
-    df["daily_return"]        = df["close"].pct_change()
-    df["rolling_return_14"]   = df["close"].pct_change(periods=14)
+    df["daily_return"]      = df["close"].pct_change()
+    df["rolling_return_14"] = df["close"].pct_change(periods=14)
     return df
 
 # ──────────────────────────────────────────────────────────────
-# Merge with market & compute relative metrics
+# Merge with market, add relative metrics
 # ──────────────────────────────────────────────────────────────
 def add_market_metrics(stock: pd.DataFrame,
                        market: pd.DataFrame) -> pd.DataFrame:
     merged = stock.join(market, how="left")
 
-    # Relative strength
     merged["market_return_14"]     = merged["rolling_return_14_mkt"]
     merged["relative_strength_14"] = (
         merged["rolling_return_14"] / merged["rolling_return_14_mkt"]
     )
 
-    # Rolling beta / alpha (20-day window)
     w = 20
     cov = merged["daily_return"].rolling(w).cov(merged["daily_return_mkt"])
     var = merged["daily_return_mkt"].rolling(w).var()
-    merged["beta_20"] = cov / var
+    merged["beta_20"]  = cov / var
     merged["alpha_20"] = (
         merged["daily_return"].rolling(w).mean()
         - merged["beta_20"] * merged["daily_return_mkt"].rolling(w).mean()
     )
 
-    # Beta for up / down market days
     def beta_signed(direction: str):
         mask = merged["daily_return_mkt"] > 0 if direction == "up" else merged["daily_return_mkt"] < 0
         return (
@@ -135,81 +124,91 @@ def add_market_metrics(stock: pd.DataFrame,
     return merged
 
 # ──────────────────────────────────────────────────────────────
-# Write back to DB
+# Bulk-insert / update  (new!)
 # ──────────────────────────────────────────────────────────────
+
 def upsert_stock(symbol: str, df: pd.DataFrame):
+    if df.empty:
+        return
+
+    # נמיר את ה-DataFrame לרשימת dict-ים (מהיר)
+    rows = []
+    for date, r in df.iterrows():
+        rows.append({
+            "symbol":  symbol,
+            "date":    date.date(),
+            "open":    _cast(r["open"]),
+            "high":    _cast(r["high"]),
+            "low":     _cast(r["low"]),
+            "close":   _cast(r["close"]),
+            "volume":  _cast(r["volume"], to_int=True),
+
+            "ema_20":  _cast(r["ema_20"]),
+            "ema_50":  _cast(r["ema_50"]),
+            "ema_200": _cast(r["ema_200"]),
+            "rsi_14":  _cast(r["rsi_14"]),
+            "macd":    _cast(r["macd"]),
+            "macd_signal": _cast(r["macd_signal"]),
+            "atr":     _cast(r["atr"]),
+            "obv":     _cast(r["obv"], to_int=True),
+
+            "daily_return":      _cast(r["daily_return"]),
+            "rolling_return_14": _cast(r["rolling_return_14"]),
+            "market_return_14":  _cast(r["market_return_14"]),
+            "relative_strength_14": _cast(r["relative_strength_14"]),
+            "beta_up_20":        _cast(r["beta_up_20"]),
+            "beta_down_20":      _cast(r["beta_down_20"]),
+            "alpha_20":          _cast(r["alpha_20"]),
+        })
+
     session = SessionLocal()
     try:
-        for date, row in df.iterrows():
-            entry = DailyStockData(
-                symbol = symbol,
-                date   = date.date(),
-
-                # OHLCV (keep originals)
-                open   = _cast(row["open"]),
-                high   = _cast(row["high"]),
-                low    = _cast(row["low"]),
-                close  = _cast(row["close"]),
-                volume = _cast(row["volume"], to_int=True),
-
-                # Core indicators
-                ema_20 = _cast(row["ema_20"]),
-                ema_50 = _cast(row["ema_50"]),
-                ema_200= _cast(row["ema_200"]),
-                rsi_14 = _cast(row["rsi_14"]),
-                macd   = _cast(row["macd"]),
-                macd_signal = _cast(row["macd_signal"]),
-                atr    = _cast(row["atr"]),
-                obv    = _cast(row["obv"], to_int=True),
-
-                # Returns
-                daily_return      = _cast(row["daily_return"]),
-                rolling_return_14 = _cast(row["rolling_return_14"]),
-                market_return_14  = _cast(row["market_return_14"]),
-
-                # Market-relative
-                relative_strength_14 = _cast(row["relative_strength_14"]),
-                beta_up_20           = _cast(row["beta_up_20"]),
-                beta_down_20         = _cast(row["beta_down_20"]),
-                alpha_20             = _cast(row["alpha_20"]),
-            )
-            session.merge(entry)
+        stmt = insert(DailyStockData).values(rows)
+        # columns to update if (symbol,date) already exist
+        update_cols = {c.key: c for c in stmt.excluded if c.key not in ("symbol", "date")}
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol", "date"],  # primary key
+            set_=update_cols
+        )
+        session.execute(stmt)
         session.commit()
-        print(f"✅ {symbol} updated.")
+        print(f"✅ {symbol}: {len(rows)} rows upserted/updated")
     except Exception as exc:
         session.rollback()
-        print(f"❌ {symbol} failed: {exc}")
+        print(f"❌ {symbol}: {exc}")
     finally:
         session.close()
+
+
 # ──────────────────────────────────────────────────────────────
-# DB – list all unique symbols
+# Load all symbols present in the table
 # ──────────────────────────────────────────────────────────────
 def load_all_symbols() -> list:
-    """Return distinct stock symbols present in daily_stock_data."""
     session = SessionLocal()
     try:
         return [row[0] for row in session.query(DailyStockData.symbol).distinct()]
     finally:
         session.close()
+
 # ──────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    market_df = load_market_df()        # one fetch only
-    session_symbols = SessionLocal()    # quick check for empty DB
-    if session_symbols.query(DailyStockData).count() == 0:
-        print("daily_stock_data is empty – load price history first.")
-        session_symbols.close()
+    market_df = load_market_df()
+    if market_df.empty:
+        print("⚠️  sp500_index table is empty – abort.")
         exit()
-    session_symbols.close()
 
-    print("Calculating indicators for all symbols…")
-    for symbol in load_all_symbols():
-        stock_df = load_stock_df(symbol)
+    if SessionLocal().query(DailyStockData).count() == 0:
+        print("⚠️  daily_stock_data is empty – load price history first.")
+        exit()
+
+    print("⏳ Calculating indicators for all symbols…")
+    for sym in load_all_symbols():
+        stock_df = load_stock_df(sym)
         if stock_df.empty:
-            print(f"{symbol} – no price data")
             continue
 
-        tech_df  = compute_stock_indicators(stock_df)
-        full_df  = add_market_metrics(tech_df, market_df)
-        upsert_stock(symbol, full_df)
+        tech_df = compute_stock_indicators(stock_df)
+        full_df = add_market_metrics(tech_df, market_df)
+        upsert_stock(sym, full_df)
