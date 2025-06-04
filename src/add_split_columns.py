@@ -1,50 +1,47 @@
 """
 📁 File: add_split_columns.py
-🎯 Adds a 'split' column ('train', 'validation', 'test') to daily_stock_data and sp500_index tables in the database, based on date ranges.
-📥 Input: 'daily_stock_data', 'sp500_index' tables from Railway DB
-📤 Output: Updated tables: 'daily_stock_data_split' and updated 'sp500_index' with split column
+🎯 Adds a 'split' column ('train', 'validation', 'test') to daily_stock_data, sp500_index, and sectors tables (if exist) in the Railway DB.
+📥 Input: 'daily_stock_data', 'sp500_index', 'sectors'
+📤 Output: Updated tables with 'split' column
 """
 
-# this script adds 'split' column to both daily_stock_data and sp500_index
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 
+# === 🔐 התחברות למסד הנתונים
 DATABASE_URL = "postgresql://postgres:LMilshujDuGlABeVjVvBvdhGHYZkrhBr@trolley.proxy.rlwy.net:32659/railway"
 engine = create_engine(DATABASE_URL)
+inspector = inspect(engine)
 
-# הגדרת הגבולות והתגיות ל־split
+# === 🧭 חלוקה לפי תאריכים (2013-2025)
 split_bins = [
-    pd.to_datetime("2015-01-01"),
+    pd.to_datetime("2013-01-01"),
     pd.to_datetime("2020-01-01"),
     pd.to_datetime("2023-01-01"),
     pd.to_datetime("2025-12-31")
 ]
 split_labels = ["train", "validation", "test"]
 
-# === 🔹 עדכון daily_stock_data_split ===
-print("🔄 Processing: daily_stock_data")
+# === 🧩 פונקציה להוספת SPLIT
+def add_split_column(table_name, sort_column="date", output_table=None):
+    print(f"\n🔄 Processing: {table_name}")
+    df = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY {sort_column}", con=engine)
+    df[sort_column] = pd.to_datetime(df[sort_column], errors="coerce")
+    df["split"] = pd.cut(df[sort_column], bins=split_bins, labels=split_labels, right=False)
 
-df_stocks = pd.read_sql("SELECT * FROM daily_stock_data ORDER BY date", con=engine)
-df_stocks["date"] = pd.to_datetime(df_stocks["date"], errors="coerce")
+    print(f"📊 {table_name} split counts:")
+    print(df["split"].value_counts())
 
-df_stocks["split"] = pd.cut(df_stocks["date"], bins=split_bins, labels=split_labels, right=False)
+    save_name = output_table if output_table else table_name
+    df.to_sql(save_name, con=engine, if_exists="replace", index=False)
+    print(f"✅ Saved table: {save_name} (with split)")
 
-print("📊 daily_stock_data split counts:")
-print(df_stocks["split"].value_counts())
+# === 🧪 בדיקה והרצה לפי אילו טבלאות קיימות
+if "daily_stock_data" in inspector.get_table_names():
+    add_split_column("daily_stock_data", output_table="daily_stock_data_split")
 
-df_stocks.to_sql("daily_stock_data_split", con=engine, if_exists="replace", index=False)
-print("✅ Saved table: daily_stock_data_split")
+if "sp500_index" in inspector.get_table_names():
+    add_split_column("sp500_index")
 
-# === 🔹 עדכון sp500_index ===
-print("\n🔄 Processing: sp500_index")
-
-df_sp500 = pd.read_sql("SELECT * FROM sp500_index ORDER BY date", con=engine)
-df_sp500["date"] = pd.to_datetime(df_sp500["date"], errors="coerce")
-
-df_sp500["split"] = pd.cut(df_sp500["date"], bins=split_bins, labels=split_labels, right=False)
-
-print("📊 sp500_index split counts:")
-print(df_sp500["split"].value_counts())
-
-df_sp500.to_sql("sp500_index", con=engine, if_exists="replace", index=False)
-print("✅ Saved table: sp500_index (with split)")
+if "sectors" in inspector.get_table_names():
+    add_split_column("sectors")
