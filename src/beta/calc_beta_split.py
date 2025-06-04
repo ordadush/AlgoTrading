@@ -1,3 +1,15 @@
+"""
+calc_beta_split.py
+
+Calculates asymmetric beta coefficients per stock:
+- β⁺: beta for days when the market rises
+- β⁻: beta for days when the market falls
+Data source: 'daily_stock_data_split' and 'sp500_index' tables from Railway DB (filtered to split='train').
+
+Output:
+- CSV file ('beta_split_results.csv') containing beta_pos, beta_neg, and beta_diff for each stock.
+"""
+
 # calc_beta_split.py
 # ------------------
 # Calculates two beta values per stock:
