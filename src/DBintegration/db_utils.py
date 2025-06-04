@@ -6,24 +6,7 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
-
-# הוספת תיקיית src ל-Python path, כדי שיוכל לייבא מ-DBintegration
-sys.path.append(str(Path(__file__).resolve().parents[1]))  # זו תיקיית src
-
-# הגדרת נתיב מדויק ל-.env בתיקיית Algo_env
-env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
-load_dotenv(dotenv_path=env_path)
-
-import os
-
-API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
-if not API_KEY:
-    raise ValueError("Missing ALPHAVANTAGE_API_KEY in environment variables")
-
-
-from DBintegration.database import SessionLocal
 from DBintegration.database import engine
-from DBintegration.models import StockPrice
 from DBintegration.models import SP500Index
 from DBintegration.models import SectorData
 from DBintegration.models import DailyStockData
@@ -34,8 +17,45 @@ from sqlalchemy import delete
 from alpha_vantage.timeseries import TimeSeries
 import pandas as pd
 import yfinance as yf
+API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
+if not API_KEY:
+    raise ValueError("Missing ALPHAVANTAGE_API_KEY in environment variables")
+from DBintegration.database import SessionLocal
+sys.path.append(str(Path(__file__).resolve().parents[1])) 
+env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
+load_dotenv(dotenv_path=env_path)
+import os
 
+def remove_data(model, symbols):
+    """
+    Deletes all rows from the `model` table where the `symbol` column matches 
+    any entry in the provided `symbols` list.
 
+    Args:
+        model:      The SQLAlchemy model class (e.g., DailyStockData, SectorData, SP500Index).
+        symbols:    A list of symbol strings to delete from the table.
+    """
+    session = SessionLocal()
+    try:
+        if not symbols:
+            print("No symbols provided to remove.")
+            return
+
+        # Construct and execute a bulk DELETE statement
+        stmt = delete(model).where(model.symbol.in_(symbols))
+        result = session.execute(stmt)
+        session.commit()
+
+        deleted_count = result.rowcount if hasattr(result, 'rowcount') else None
+        print(f"✅ Removed rows for symbols {symbols}. Deleted count: {deleted_count}")
+
+    except Exception as e:
+        session.rollback()
+        print(f"❌ Error deleting data for symbols {symbols}: {e}")
+    finally:
+        session.close()
+
+#############################################################################
 def update_data(model, df):
     """
     Updates the database with only the changes in the DataFrame.
@@ -103,7 +123,7 @@ def update_data(model, df):
         print(f"❌ Final commit failed: {e}")
     finally:
         session.close()
-        
+#########################################################################################################
 def model_to_dataframe(model_class): ###input: model, output: 
     """
     Given a SQLAlchemy model class, return a Pandas DataFrame of all its rows.
@@ -127,7 +147,7 @@ def model_to_dataframe(model_class): ###input: model, output:
         return pd.DataFrame(data)
     finally:
         session.close()
-
+##########################################################################################################
 def delete_all_rows(model: DeclarativeMeta):
     """
     Deletes all rows from the table associated with the given SQLAlchemy model class.
@@ -174,8 +194,7 @@ def save_dataframe_to_db(symbol, df):
     if df.empty:
         print(f"❌ DataFrame for {symbol} is empty.")
         session.close()
-        return
-    
+        return  
     required_columns = ["Open", "High", "Low", "Close"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     
