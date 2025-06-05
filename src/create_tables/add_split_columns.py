@@ -1,9 +1,10 @@
 """
 📁 File: add_split_columns.py
-🎯 Adds a 'split' column ('train', 'validation', 'test') to daily_stock_data, sp500_index, and sector_data tables (if exist) in the Railway DB.
-📥 Input: 'daily_stock_data', 'sp500_index', 'sector_data'
+🎯 Adds a 'split' column ('train', 'validation', 'test') to daily_stock_data and sp500_index tables (if exist) in the Railway DB.
+📥 Input: 'daily_stock_data', 'sp500_index'
 📤 Output: Updated tables with 'split' column
 """
+
 
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
@@ -52,7 +53,7 @@ def update_split_column(table_name):
     print(f"✅ Updated {table_name} with 'split' column and saved {len(df)} rows")
 
 # === 🔁 ריצה על כל טבלה שרלוונטית
-for table in ["daily_stock_data", "sp500_index", "sector_data"]:
+for table in ["daily_stock_data", "sp500_index"]:
     if table in inspector.get_table_names():
         ensure_split_column(table)
         update_split_column(table)
