@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 from DBintegration.database import engine
 from DBintegration.models import SP500Index
-from DBintegration.models import SectorData
 from DBintegration.models import DailyStockData
 from DBintegration.models import Base
 from sqlalchemy.orm import Session
@@ -305,16 +304,16 @@ def fetch_and_store_data(symbol: str, model: str):
                     close=round(float(row['Close']), 2),
                     volume=volume
                 )
-            elif model == 'sector':
-                entry = SectorData(
-                    symbol=symbol,
-                    date=date.date(),
-                    open=round(float(row['Open']), 2),
-                    high=round(float(row['High']), 2),
-                    low=round(float(row['Low']), 2),
-                    close=round(float(row['Close']), 2),
-                    volume=volume
-                )
+            # elif model == 'sector':
+            #     entry = SectorData(
+            #         symbol=symbol,
+            #         date=date.date(),
+            #         open=round(float(row['Open']), 2),
+            #         high=round(float(row['High']), 2),
+            #         low=round(float(row['Low']), 2),
+            #         close=round(float(row['Close']), 2),
+            #         volume=volume
+            #     )
             else:
                 raise ValueError("Model must be either 'index' or 'stock'.")
 
@@ -371,4 +370,4 @@ def fetch_and_store_sector_etfs(etf_list=None):
             print(f"❌ Error processing {symbol}: {e}")
 
 if __name__ == "__main__":
-   pass
+   fetch_and_store_data("SPY", "index")

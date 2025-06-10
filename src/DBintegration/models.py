@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 
-env_path = Path(__file__).resolve().parents[2] / ".env"
+env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
 load_dotenv(dotenv_path=env_path)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -49,10 +49,12 @@ class DailyStockData(Base):
     # Filtering flags
     is_candidate_long  = Column(Boolean)
     is_candidate_short = Column(Boolean)
+    #for training
+    expected_return_tommorow = Column(Float)
 
     def __init__(self, **kwargs):
         """
-        Initializes SectorData with optional rounding of OHLC fields.
+        Initializes DailyStockData with optional rounding of OHLC fields.
         Rounds 'open', 'high', 'low', 'close' to 2 decimals if provided.
         """
         for key in ['open', 'high', 'low', 'close']:
@@ -79,34 +81,3 @@ class SP500Index(Base):
     obv = Column(BigInteger, nullable=True)
     market_score = Column(Integer, nullable=True)
     market_trend = Column(Float, nullable=True)
-
-class SectorData(Base):
-    __tablename__ = 'sector_data'
-
-    symbol = Column(String, primary_key=True)
-    date = Column(Date, primary_key=True, index=True)
-    open = Column(Float)
-    high = Column(Float)
-    low = Column(Float)
-    close = Column(Float)
-    volume = Column(BigInteger, nullable=True)
-
-    ema_50 = Column(Float, nullable=True)
-    ema_200 = Column(Float, nullable=True)
-    rsi = Column(Float, nullable=True)
-    macd = Column(Float, nullable=True)
-    macd_signal = Column(Float, nullable=True)
-    atr = Column(Float, nullable=True)
-    obv = Column(Float, nullable=True)
-    market_score = Column(Integer, nullable=True)
-    market_trend = Column(Float, nullable=True)
-
-    def __init__(self, **kwargs):
-        """
-        Initializes SectorData with optional rounding of OHLC fields.
-        Rounds 'open', 'high', 'low', 'close' to 2 decimals if provided.
-        """
-        for key in ['open', 'high', 'low', 'close']:
-            if key in kwargs and kwargs[key] is not None:
-                kwargs[key] = round(float(kwargs[key]), 2)
-        super().__init__(**kwargs)
