@@ -1,3 +1,4 @@
+#trading_
 class Trade:
     def __init__(self, symbol, entry_date, entry_price, stop_loss, take_profit):
         self.symbol = symbol

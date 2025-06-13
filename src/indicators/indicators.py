@@ -10,7 +10,7 @@ from DBintegration.models import SP500Index# or any other model you want to use
 from sqlalchemy.orm import sessionmaker
 from DBintegration.models import Base
 from pathlib import Path
-from Indicators.df_utils import count_symbols
+from indicators.df_utils import count_symbols
 from Indicators.df_utils import split_dataframe_by_dates
 import pandas as pd
 from DBintegration.db_utils import *
