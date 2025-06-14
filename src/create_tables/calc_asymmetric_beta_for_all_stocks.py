@@ -1,27 +1,25 @@
-
 """
 📊 calc_asymmetric_beta_for_all_stocks.py
 
 🔍 מטרה:
-חישוב בטא אסימטרית (β⁺ ו־β⁻) *לכל מניה* במסד הנתונים, על בסיס חלון נע של 20 ימים, והוספת התוצאה כטבלה נפרדת ב־PostgreSQL בשם: `asymmetric_betas`.
+חישוב בטא אסימטרית (β⁺ ו־β⁻) *לכל מניה* במסד הנתונים, על בסיס חלון נע של 20 ימים,
+רק עבור תקופת ה־TRAIN, ושמירת התוצאה עם עמודת SPLIT.
 
 📥 קלט:
-- טבלת המניות: `daily_stock_data`
-- טבלת המדד: `sp500_index`
-- חלון זמן לחישוב: ברירת מחדל 20 ימים
-- הנתונים נלקחים רק עבור split='train'
+- טבלת המניות: `daily_stock_data` (רק split='train')
+- טבלת המדד: `sp500_index` (רק split='train')
 
 📤 פלט:
-- טבלה חדשה במסד הנתונים בשם `asymmetric_betas`
-  עם העמודות:
+- טבלה `asymmetric_betas` עם העמודות:
     • date
     • symbol
-    • beta_up   ← בטא עבור ימים שבהם השוק עלה
-    • beta_down ← בטא עבור ימים שבהם השוק ירד
+    • beta_up
+    • beta_down
+    • split = 'train' ← מאפשר סינון downstream
 
-🎯 שימושים:
-- בניית אסטרטגיות שמבוססות על חוזקה יחסית של מניה לשוק.
-- ניתוח התנהגות שונה של מניות בשוק שורי לעומת שוק דובי.
+🎯 הערה עתידית:
+אם תורחב התמיכה גם ל־validation/test – יש לעבור בלולאה גם על splits נוספים,
+או לשנות את הערך של עמודת split בהתאם לקלט.
 """
 
 import pandas as pd
@@ -39,8 +37,8 @@ db_url = os.getenv("DATABASE_URL")
 engine = create_engine(db_url)
 
 # שלוף את נתוני המניות והשוק
-df_stocks = pd.read_sql("SELECT date, symbol, close FROM daily_stock_data", engine)
-df_market = pd.read_sql("SELECT date, close FROM sp500_index", engine)
+df_stocks = pd.read_sql("SELECT date, symbol, close FROM daily_stock_data WHERE split = 'train'", engine)
+df_market = pd.read_sql("SELECT date, close FROM sp500_index WHERE split = 'train'", engine)
 df_market = df_market.rename(columns={"close": "close_market"})
 
 # התוצאה הכוללת תיאגר כאן
@@ -58,6 +56,7 @@ for symbol in df_stocks['symbol'].unique():
 
 # מיזוג התוצאות לטבלה אחת
 final_df = pd.concat(all_results, ignore_index=True)
+final_df["split"] = "train"
 
 # שלח את זה ל־DB
 final_df.to_sql("asymmetric_betas", con=engine, if_exists="replace", index=False)
