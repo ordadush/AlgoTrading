@@ -1,3 +1,4 @@
+#display_marcov_fft_com.py
 """
 Displays the S&P 500 close price with a 5-level combined regime signal.
 

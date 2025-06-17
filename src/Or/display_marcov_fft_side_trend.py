@@ -1,3 +1,4 @@
+#display_marcov_fft_side_trend.py
 """
 Displays the S&P 500 close price with decision‑fusion regime signals (Approach 3).
 
