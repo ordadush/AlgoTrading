@@ -1,9 +1,10 @@
 # db_utils.py
 # Contains utility functions for saving stock data to the database and previewing or clearing data.
-
+from __future__ import annotations
 import sys
 import os
 import pandas as pd
+import numpy as np
 from dotenv import load_dotenv
 from pathlib import Path
 from DBintegration.database import engine
@@ -13,9 +14,18 @@ from DBintegration.models import Base
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import DeclarativeMeta
 from sqlalchemy import delete
+from sqlalchemy import MetaData
 from alpha_vantage.timeseries import TimeSeries
-import pandas as pd
-import yfinance as yf
+from collections import defaultdict
+from datetime import date
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from DBintegration.models import BetaCalculation  # → ORM model that maps to beta_calculation
+from sqlalchemy.dialects.postgresql import insert
+from itertools import islice 
+from sqlalchemy import text
+from contextlib import contextmanager
+from typing import List, Dict, Iterable
+
 API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 if not API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY in environment variables")
@@ -23,7 +33,6 @@ from DBintegration.database import SessionLocal
 sys.path.append(str(Path(__file__).resolve().parents[1])) 
 env_path = Path(__file__).resolve().parents[2] / "Algo_env" / ".env"
 load_dotenv(dotenv_path=env_path)
-import os
 
 def remove_data(model, symbols):
     """
@@ -304,16 +313,7 @@ def fetch_and_store_data(symbol: str, model: str):
                     close=round(float(row['Close']), 2),
                     volume=volume
                 )
-            # elif model == 'sector':
-            #     entry = SectorData(
-            #         symbol=symbol,
-            #         date=date.date(),
-            #         open=round(float(row['Open']), 2),
-            #         high=round(float(row['High']), 2),
-            #         low=round(float(row['Low']), 2),
-            #         close=round(float(row['Close']), 2),
-            #         volume=volume
-            #     )
+
             else:
                 raise ValueError("Model must be either 'index' or 'stock'.")
 
@@ -369,5 +369,424 @@ def fetch_and_store_sector_etfs(etf_list=None):
         except Exception as e:
             print(f"❌ Error processing {symbol}: {e}")
 
+def drop_table(model):
+    """
+    Drops the entire table from the database (irreversible).
+    """
+    try:
+        table_name = model.__tablename__
+        metadata = MetaData()
+        metadata.reflect(bind=engine)
+        if table_name in metadata.tables:
+            table = metadata.tables[table_name]
+            table.drop(bind=engine)
+            print(f"✅ Table '{table_name}' dropped successfully.")
+        else:
+            print(f"⚠️ Table '{table_name}' not found in metadata.")
+    except Exception as e:
+        print(f"❌ Error dropping table: {e}")
+
+def update_score_from_csv(csv_path: str):
+    """
+    Updates the 'score' column in the SP500Index table using the values from the last column
+    of a given CSV file. Matches by date.
+    """
+    session = None
+    try:
+        df = pd.read_csv(csv_path)
+
+        if 'date' not in df.columns:
+            print("❌ CSV missing 'date' column.")
+            return
+
+        if 'regime_signal_combined' not in df.columns:
+            print("❌ CSV missing 'regime_signal_combined' column.")
+            return
+
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        session = SessionLocal()
+        updated_count = 0
+
+        dates = df['date'].tolist()
+        records = session.query(SP500Index).filter(SP500Index.date.in_(dates)).all()
+        record_map = {r.date: r for r in records}
+
+        for _, row in df.iterrows():
+            day = row['date']
+            score = row['regime_signal_combined']
+
+            record = record_map.get(day)
+            if record:
+                record.score = score
+                updated_count += 1
+
+        session.commit()
+        print(f"✅ Updated 'score' for {updated_count} rows from {csv_path}")
+    except Exception as e:
+        print(f"❌ Failed to update scores: {e}")
+    finally:
+        if session:
+            session.close()
+
+def bulk_load_stocks_optimized(
+    csv_path: str,
+    chunk_size: int  = 50_000,  
+    batch_size: int  = 5_000,   
+):
+    """
+    Efficiently loads a large CSV file containing stock data into the database
+    in safe, deduplicated chunks, supporting re-runnable operation.
+    """
+    csv_path = Path(csv_path).expanduser().resolve()
+    if not csv_path.exists():
+        print(f"❌ CSV not found: {csv_path}")
+        return
+
+    print(f"⚡ Loading {csv_path} in chunks of {chunk_size:,} rows…")
+
+    required_cols = {
+        "date", "Ticker", "Open", "High", "Low",
+        "Close", "Volume", "Return", "SP_return"
+    }
+
+    total_rows = inserted_rows = 0
+    chunk_no = 0
+
+    # Helper to split list into fixed-size batches
+    def grouper(seq, n):
+        it = iter(seq)
+        while True:
+            batch = list(islice(it, n))
+            if not batch:
+                break
+            yield batch
+
+    for chunk in pd.read_csv(csv_path, chunksize=chunk_size):
+        chunk_no += 1
+        total_rows += len(chunk)
+        print(f"📦  Chunk {chunk_no}: {len(chunk):,} rows")
+
+        # Skip chunks missing required columns
+        if missing := (required_cols - set(chunk.columns)):
+            print(f"⚠️  Chunk {chunk_no} skipped – missing columns: {missing}")
+            continue
+
+        # Rename CSV columns to match DB model field names
+        chunk = chunk.rename(columns={
+            "Ticker":     "symbol",
+            "Return":     "return_daily",
+            "SP_return":  "sp_return",
+            "Open":       "open",
+            "High":       "high",
+            "Low":        "low",
+            "Close":      "close",
+            "Volume":     "volume",
+            "date":       "date",
+        })
+        chunk.columns = [c.lower() for c in chunk.columns]
+
+        # Clean rows missing key fields
+        chunk = chunk.dropna(subset=["symbol", "date"])
+        chunk["date"] = pd.to_datetime(
+            chunk["date"], format="%d%b%Y", errors="coerce"
+        ).dt.date
+        chunk = chunk.dropna(subset=["date"])
+
+        # Convert numeric columns, coerce bad values to NaN
+        numeric_cols = [
+            "open", "high", "low", "close",
+            "volume", "return_daily", "sp_return"
+        ]
+        chunk[numeric_cols] = chunk[numeric_cols].apply(
+            pd.to_numeric, errors="coerce"
+        )
+
+        # Drop duplicates within each chunk to prevent redundant upserts
+        before = len(chunk)
+        chunk = (
+            chunk.sort_values("date")
+                  .drop_duplicates(
+                     subset=["symbol", "date"],
+                     keep="last"
+                  )
+        )
+        duplicates_dropped = before - len(chunk)
+        if duplicates_dropped:
+            print(f"   ↪️  {duplicates_dropped:,} intra-chunk duplicates removed")
+
+        # Convert DataFrame to list of dicts for DB insertion
+        used_fields = [
+            "symbol", "date", "open", "high", "low", "close",
+            "volume", "return_daily", "sp_return"
+        ]
+        records = chunk[used_fields].to_dict(orient="records")
+        if not records:
+            continue
+
+        # Insert data in safe batches with upsert logic
+        session = SessionLocal()
+        try:
+            for batch in grouper(records, batch_size):
+                stmt = insert(DailyStockData).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["symbol", "date"],
+                    set_={k: stmt.excluded[k]
+                          for k in batch[0] if k not in ("symbol", "date")}
+                )
+                session.execute(stmt)
+            session.commit()
+            inserted_rows += len(records)
+            print(f"✅  Chunk {chunk_no} committed ({len(records):,} rows) "
+                  f"— total inserted {inserted_rows:,}/{total_rows:,}")
+        except Exception as e:
+            session.rollback()
+            print(f"❌  Chunk {chunk_no} failed: {e}")
+        finally:
+            session.close()
+
+    print("\n🚀 Finished. "
+          f"inserted/updated {inserted_rows:,}/{total_rows:,} rows.")
+
+
+MIN_DAYS        = 252
+MAX_MISS_RATIO  = 0.20  
+MAX_ABS_RETURN  = 0.30       
+BATCH_DELETE    = 10_000      
+ROLLING_WINDOWS = [30, 60, 90, 180, 360] 
+MIN_POINTS_WIN  = 20          
+VAR_EPS         = 1e-6        
+SYMBOL_BATCH    = 250       
+BETA_TABLE      = "beta_calculation"  
+
+
+@contextmanager
+def session_scope():
+    """Provide a transactional scope around a series of operations."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def clean_stock_table(min_days: int = MIN_DAYS,
+                      max_missing: float = MAX_MISS_RATIO,
+                      max_abs_ret: float = MAX_ABS_RETURN) -> Dict[str, int]:
+    """
+    Permanently remove low‑quality symbols from *daily_stock_data*.
+
+    * **Trading history** - requires *min_days* observations.
+    * **Missing‑ratio** - at most *max_missing* fraction of index‑days may be missing.
+    * **Data validity** - OHLC>0 and |return| ≤ *max_abs_ret*.
+
+    Returns
+    -------
+    dict
+        Mapping *reason → count* summarising removed symbols.
+    """
+
+    reasons: Dict[str, set[str]] = defaultdict(set)
+
+    with session_scope() as s:
+        # 1. compare per‑symbol row‑count with index coverage
+        stats_sql = text("""
+        WITH symbol_stats AS (
+            SELECT symbol, COUNT(*) AS n_obs,
+                   MIN(date) AS start_d, MAX(date) AS end_d
+              FROM daily_stock_data
+          GROUP BY symbol
+        ), exp_cnt AS (
+            SELECT ss.symbol, ss.n_obs,
+                   (SELECT COUNT(*)
+                      FROM sp500_index idx
+                     WHERE idx.date BETWEEN ss.start_d AND ss.end_d) AS n_exp
+              FROM symbol_stats ss)
+        SELECT symbol,
+               CASE
+                 WHEN n_obs < :min_days THEN 'too_short'
+                 WHEN n_obs < n_exp * (1 - :max_missing) THEN 'too_many_missing'
+               END AS fail_reason
+          FROM exp_cnt
+         WHERE n_obs < :min_days
+            OR n_obs < n_exp * (1 - :max_missing);
+        """)
+        for sym, reason in s.execute(stats_sql, dict(min_days=min_days, max_missing=max_missing)):
+            reasons[reason].add(sym)
+
+        # 2. invalid numeric values / missing returns
+        bad_val_sql = text("""
+        SELECT DISTINCT symbol, 'bad_values' AS fail_reason
+          FROM daily_stock_data
+         WHERE open  <= 0 OR high <= 0 OR low  <= 0 OR close <= 0
+            OR volume IS NULL
+            OR return_daily IS NULL
+            OR ABS(return_daily) > :max_abs_ret;
+        """)
+        for sym, reason in s.execute(bad_val_sql, dict(max_abs_ret=max_abs_ret)):
+            reasons[reason].add(sym)
+
+        # 3. delete in manageable chunks
+        to_drop = set().union(*reasons.values())
+        if to_drop:
+            print(f"⚠️  {len(to_drop):,} symbols flagged for removal – deleting…")
+            syms = list(to_drop)
+            for i in range(0, len(syms), BATCH_DELETE):
+                s.execute(text("DELETE FROM daily_stock_data WHERE symbol = ANY(:syms)"),
+                          dict(syms=syms[i:i+BATCH_DELETE]))
+
+        kept = s.execute(text("SELECT COUNT(DISTINCT symbol) FROM daily_stock_data")).scalar_one()
+
+    # final report
+    print("\n🚀 Cleaning complete.")
+    for r, st in reasons.items():
+        print(f"   · {len(st):>6} symbols removed – {r}")
+    print(f"   · {kept:>6} symbols remain in *daily_stock_data*.\n")
+    return {k: len(v) for k, v in reasons.items()}
+
+def count_distinct_symbols() -> int:
+    """Return the number of unique symbols present in *daily_stock_data*."""
+    with session_scope() as s:
+        cnt = s.execute(text("SELECT COUNT(DISTINCT symbol) FROM daily_stock_data")).scalar_one()
+    print(f"📊 Universe size: {cnt} symbols")
+    return cnt
+
+
+def _beta_series(mkt, stk, mask, win):
+    """
+    Calculate rolling beta series for a single condition (either up or down market days).
+
+    Parameters:
+        mkt (pd.Series): Market returns (benchmark series).
+        stk (pd.Series): Stock returns (individual stock series).
+        mask (pd.Series): Boolean mask indicating which days to include (e.g., up or down days).
+        win (int): Rolling window size (number of days).
+
+    Returns:
+        pd.Series: Rolling beta values where variance is sufficiently large.
+    """
+    min_req = int(win * 0.2)
+    m = mkt.where(mask)
+    r = stk.where(mask)
+
+    cov  = r.rolling(win, min_periods=min_req).cov(m)
+    var  = m.rolling(win, min_periods=min_req).var()
+    beta = cov / var
+    return beta.where(var > VAR_EPS)
+
+def _fast_betas(df: pd.DataFrame, win: int) -> pd.DataFrame:
+    """
+    Compute rolling up-beta and down-beta for a given window size (fully vectorized).
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing columns: 'date', 'sp_return', 'return_daily'.
+        win (int): Rolling window size (number of days).
+
+    Returns:
+        pd.DataFrame: DataFrame with columns: 'date', 'beta_up_<win>', 'beta_down_<win>'.
+    """
+    mkt = df['sp_return']
+    stk = df['return_daily']
+    up  = mkt > 0
+    dn  = mkt < 0
+
+    return pd.DataFrame({
+        'date': df['date'],
+        f'beta_up_{win}':  _beta_series(mkt, stk, up, win).to_numpy(),
+        f'beta_down_{win}': _beta_series(mkt, stk, dn, win).to_numpy()
+    })
+
+def _rolling_betas(df: pd.DataFrame, windows: Iterable[int]) -> Dict[int, pd.DataFrame]:
+    """
+    Compute rolling up/down betas for multiple window sizes.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing columns: 'date', 'sp_return', 'return_daily'.
+        windows (Iterable[int]): Iterable of rolling window sizes (number of days).
+
+    Returns:
+        Dict[int, pd.DataFrame]: Mapping of window size to corresponding beta DataFrame.
+    """
+    return {w: _fast_betas(df, w) for w in windows}
+
+def _bulk_upsert(session, rows: List[Dict], columns: List[str]):
+    """
+    Perform a bulk upsert (insert or update) into the BetaCalculation table.
+
+    Parameters:
+        session (Session): Active SQLAlchemy session.
+        rows (List[Dict]): List of row dictionaries to insert.
+        columns (List[str]): List of column names for upsert; primary keys are assumed to be first two columns.
+    """
+    if not rows:
+        return
+    insert_stmt = pg_insert(BetaCalculation).values(rows)
+    update_cols = {c: insert_stmt.excluded[c] for c in columns[2:]}  # exclude primary keys
+    session.execute(
+        insert_stmt.on_conflict_do_update(
+            index_elements=['symbol', 'date'],
+            set_=update_cols
+        )
+    )
+    
+def compute_stock_betas(windows: List[int] = ROLLING_WINDOWS,
+                         symbol_batch: int = SYMBOL_BATCH) -> None:
+    """Calculate rolling up/down betas and persist to *beta_calculation*.
+
+    Parameters
+    ----------
+    windows : list[int]
+        Rolling window lengths (trading‑days).
+    symbol_batch : int
+        Number of symbols processed per DB round‑trip.
+    """
+
+    # column order for both pandas → dict and DB insert
+    col_list = ['symbol', 'date'] + [f'beta_up_{w}' for w in windows] + [f'beta_down_{w}' for w in windows]
+
+    # full symbol universe
+    with session_scope() as s:
+        symbols = [row[0] for row in s.execute(text("SELECT DISTINCT symbol FROM daily_stock_data ORDER BY symbol"))]
+
+    total = len(symbols)
+    processed = 0
+
+    for i in range(0, total, symbol_batch):
+        batch = symbols[i:i + symbol_batch]
+        print(f"⚡ Processing symbols {i + 1:,} – {i + len(batch):,} / {total:,} …")
+
+        # pull once per batch
+        with session_scope() as s:
+            df = pd.read_sql(text("""
+                SELECT symbol, date, return_daily, sp_return
+                  FROM daily_stock_data
+                 WHERE symbol = ANY(:syms)
+              ORDER BY symbol, date"""), s.bind, params={'syms': batch})
+
+        records: List[Dict] = []
+        for sym, g in df.groupby('symbol', sort=False):
+            g = g.dropna(subset=['return_daily', 'sp_return']).reset_index(drop=True)
+            if g.empty:
+                continue
+            betas = _rolling_betas(g[['date', 'return_daily', 'sp_return']], windows)
+            merged = g[['date']].copy()
+            for w in windows:
+                merged = merged.merge(betas[w], on='date')
+            merged.insert(0, 'symbol', sym)
+            records.extend(merged[col_list].to_dict('records'))
+
+        # single upsert per batch
+        with session_scope() as s:
+            _bulk_upsert(s, records, col_list)
+
+        processed += len(batch)
+        print(f"✅ Batch finished – {processed:,}/{total:,} symbols done.\n")
+
+    print("🚀 Beta calculation complete.")
+
 if __name__ == "__main__":
-   fetch_and_store_data("SPY", "index")
+    compute_stock_betas() 
+    # monitor_beta_progress(poll_interval=60)

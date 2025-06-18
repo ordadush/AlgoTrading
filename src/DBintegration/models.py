@@ -15,49 +15,31 @@ Base = declarative_base()
 
 class DailyStockData(Base):
     __tablename__ = "daily_stock_data"
-    date = Column(Date, primary_key=True)
+
     symbol = Column(String, primary_key=True)
+    date = Column(Date, primary_key=True, index=True)
 
-    # OHLCV
-    open   = Column(Float)
-    high   = Column(Float)
-    low    = Column(Float)
-    close  = Column(Float)
-    volume = Column(Integer)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(BigInteger)
 
-    # Indicators
-    ema_20  = Column(Float)
-    ema_50  = Column(Float)
-    ema_200 = Column(Float)
-    rsi_14  = Column(Float)
-    macd         = Column(Float)
-    macd_signal  = Column(Float)
-    obv          = Column(Float)
-    atr          = Column(Float)
+    return_daily = Column(Float, nullable=True)
+    sp_return = Column(Float, nullable=True)
 
-    # Returns
-    daily_return        = Column(Float)
-    rolling_return_14   = Column(Float)
-    market_return_14    = Column(Float)
+    beta_positive = Column(Float, nullable=True)
+    beta_negative = Column(Float, nullable=True)
 
-    # Strength / Regression
-    relative_strength_14 = Column(Float)
-    beta_up_20           = Column(Float)
-    beta_down_20         = Column(Float)
-    alpha_20             = Column(Float)
+    strength_label = Column(Float, nullable=True)  
 
-    # Filtering flags
-    is_candidate_long  = Column(Boolean)
-    is_candidate_short = Column(Boolean)
-    #for training
-    expected_return_tommorow = Column(Float)
 
     def __init__(self, **kwargs):
         """
         Initializes DailyStockData with optional rounding of OHLC fields.
         Rounds 'open', 'high', 'low', 'close' to 2 decimals if provided.
         """
-        for key in ['open', 'high', 'low', 'close']:
+        for key in ['open', 'high', 'low', 'close', "return_daily", "sp_return"]:
             if key in kwargs and kwargs[key] is not None:
                 kwargs[key] = round(float(kwargs[key]), 2)
         super().__init__(**kwargs)
@@ -72,12 +54,24 @@ class SP500Index(Base):
     close = Column(Float)
     volume = Column(BigInteger, nullable=True)
 
-    ema_50 = Column(Float, nullable=True)
-    ema_200 = Column(Float, nullable=True)
-    rsi = Column(Float, nullable=True)
-    macd = Column(Float, nullable=True)
-    macd_signal = Column(Float, nullable=True)
-    atr = Column(Float, nullable=True)
-    obv = Column(BigInteger, nullable=True)
-    market_score = Column(Integer, nullable=True)
-    market_trend = Column(Float, nullable=True)
+    score = Column(Float, nullable=True) 
+    beta_positive = Column(Float, nullable=True)
+    beta_negative = Column(Float, nullable=True)
+    dataset_split = Column(String, nullable=True)  #"train" or "test"
+
+class BetaCalculation(Base):
+    __tablename__ = 'beta_calculation'
+
+    symbol = Column(String, primary_key=True, index=True)
+    date = Column(Date, primary_key=True, index=True)
+
+    beta_up_30 = Column(Float, nullable=True)
+    beta_down_30 = Column(Float, nullable=True)
+    beta_up_60 = Column(Float, nullable=True)
+    beta_down_60 = Column(Float, nullable=True)
+    beta_up_90 = Column(Float, nullable=True)
+    beta_down_90 = Column(Float, nullable=True)
+    beta_up_180 = Column(Float, nullable=True)
+    beta_down_180 = Column(Float, nullable=True)
+    beta_up_360 = Column(Float, nullable=True)
+    beta_down_360 = Column(Float, nullable=True)
