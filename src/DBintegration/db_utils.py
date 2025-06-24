@@ -788,5 +788,6 @@ def compute_stock_betas(windows: List[int] = ROLLING_WINDOWS,
     print("🚀 Beta calculation complete.")
 
 if __name__ == "__main__":
-    compute_stock_betas() 
+    # compute_stock_betas() 
     # monitor_beta_progress(poll_interval=60)
+    update_score_from_csv("markov_fft_com_old_data.csv")
