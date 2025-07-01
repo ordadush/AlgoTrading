@@ -32,7 +32,6 @@ def calculate_beta_index(df: pd.DataFrame, window: int = 250):
 
     # --- 1. Rolling computations with data availability check ---
     for end in range(len(data)):
-        # --- CHANGE STARTS HERE ---
         # Check if there are enough preceding data points for a full window
         if end + 1 < window:
             # Not enough data, append NaN for all results
@@ -66,10 +65,6 @@ def calculate_beta_index(df: pd.DataFrame, window: int = 250):
     df['beta_index'] = (
         res['num_up'] * res['beta_pos'] - res['num_down'] * res['beta_neg']
     ) / window
-    
-    # --- 3. Optional plotting (No changes here, this part is now in the main script) ---
-    # ...
-
     return df
 
 CHECKPOINT_DIR = "data_cache" # checkpoints

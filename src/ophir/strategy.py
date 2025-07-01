@@ -13,6 +13,7 @@ class MyStrategy(bt.Strategy):
     params = (
         ('beta_period', 360),
         ('beta_short_window', 20),
+        ('end_dates', None),
     )    
     
     def __init__(self):
@@ -40,46 +41,56 @@ class MyStrategy(bt.Strategy):
             )
             # Initialize the placeholder for order tracking for this specific stock
             self.orders_by_stock[stock_symbol] = None
-
             print(f" > Initialized BetaIndex for stock: {stock_symbol}")
             
         print("--- Strategy Initialization Complete ---")
   
     def next(self):
         for d in self.datas[:-1]:
-            stock_symbol = d._name        
-            if self.orders_by_stock[stock_symbol]: #current: buy 1 of each stock
-                continue  # already bought that TODO: ADD multi-buy logic
-            if (len(d) <= self.p.beta_period):
-                continue    # not enough data
-            position = self.getposition(d) #get position for this feed
-
-            if not position:  #case: not in position
-                betaIdx = self.beta_indicators[stock_symbol].beta_index[0]
-                betaIdxRecent = self.beta_indicators[stock_symbol].beta_index_recent[0]
-            #... (BUY CONDITION)
-                if (betaIdx > 0.5 and betaIdxRecent > 0.5): #TODO std? market?
-                    print(f'{d.datetime.date(0)} - BUY SIGNAL for {stock_symbol}, Beta Index: {betaIdx:.2f}, Recent Beta Index: {betaIdxRecent:.2f}')
-                    self.orders_by_stock[stock_symbol] = self.buy(data=d)
-            else:
-            #...(SELL CONDITION)
-                beta_val_recent = self.beta_indicators[stock_symbol].beta_index_recent[0]
-                if (beta_val_recent < 0.2): #TODO 
-                    print(f'{d.datetime.date(0)} - SELL SIGNAL for {stock_symbol}, Recent Beta Index: {beta_val_recent:.2f}')
-                    self.orders_by_stock[stock_symbol] = self.sell(data=d)
+            stock_symbol = d._name
+            if self.orders_by_stock.get(stock_symbol):
+                continue
+            if pd.isna(d.close[0]): # If today's data is invalid (NaN), skip
+                continue
+            position = self.getposition(d)
+            #position
+            if position:
+                end_date_for_stock = self.p.end_dates.get(stock_symbol)
+                current_date = d.datetime.date(0)
+                # Exit Condition 1: Forced sell on the stock's last day of data
+                if end_date_for_stock and current_date == end_date_for_stock.date():
+                    print(f'--- FORCED SELL (End of Data) for {stock_symbol} on {current_date} ---')
+                    self.sell(data=d)
+                    continue  # Done with this stock for today
+                # Exit Condition 2: Regular sell based on indicator signal
+                # 
+                if len(d) > self.p.beta_period:
+                    beta_val_recent = self.beta_indicators[stock_symbol].beta_index_recent[0]
+                    if beta_val_recent < 0.2:
+                        print(f'{d.datetime.date(0)} - SELL SIGNAL for {stock_symbol}, Recent Beta Index: {beta_val_recent:.2f}')
+                        self.orders_by_stock[stock_symbol] = self.sell(data=d)                
+                continue
+            if len(d) <= self.p.beta_period:
+                continue
+            # BUY
+            betaIdx = self.beta_indicators[stock_symbol].beta_index[0]
+            betaIdxRecent = self.beta_indicators[stock_symbol].beta_index_recent[0]
+            if (betaIdx > 0.5 and betaIdxRecent > 0.5):
+                print(f'{d.datetime.date(0)} - BUY SIGNAL for {stock_symbol}, Beta Index: {betaIdx:.2f}, Recent Beta Index: {betaIdxRecent:.2f}')
+                self.orders_by_stock[stock_symbol] = self.buy(data=d)
+                
+                
     def notify_order(self, order):
         stock_symbol = order.data._name
-
         if order.status in [order.Submitted, order.Accepted]:
             # order is already in process
             return
-
         if order.status in [order.Completed]:
             if order.isbuy():
                 print(f'BUY EXECUTED for {stock_symbol} at {order.executed.price:.2f}')
             elif order.issell():
                 print(f'SELL EXECUTED for {stock_symbol} at {order.executed.price:.2f}')
-            
+        
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             print(f'Order for {stock_symbol} was Canceled/Margin/Rejected')
 

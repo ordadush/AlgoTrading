@@ -22,6 +22,8 @@ from ophir.btIndicators import *
 from ophir.strategy import *
 from ophir.utils import *
 from ophir.utils import split_dataframe_by_dates
+import matplotlib
+matplotlib.use('TkAgg') 
 #added coloumn (variable class)
 class SP500IndexWithScore(bt.feeds.PandasData): #bt pseudo constructor
     """
@@ -30,47 +32,59 @@ class SP500IndexWithScore(bt.feeds.PandasData): #bt pseudo constructor
     lines = ('score',)
     params = (('score', 6),) #score is the coloumn[6]
     
-CHECKPOINT_DIR = "data_cache" # checkpoints
+CHECKPOINT_DIR = "data_cache"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CP_MAIN = os.path.join(CHECKPOINT_DIR, "df_main.parquet")
 CP_SP500 = os.path.join(CHECKPOINT_DIR, "df_sp500.parquet")
 use_cp = os.path.exists(CP_MAIN) and os.path.exists(CP_SP500)
+
+# --- REVISED DATA LOADING AND PREPARATION ---
+
 if use_cp:
     print("Loading data from checkpoints…")
     df_main  = pd.read_parquet(CP_MAIN)
     df_sp500 = pd.read_parquet(CP_SP500)
-
-    # recreate derived frames
-    df_train, df_val, df_test = split_dataframe_by_dates(df_main)
-    df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
-
-    # restore indexes exactly as in the build path
-    for _df in (df_train, df_sp500_train):
-        _df['date'] = pd.to_datetime(_df['date'])
-        _df.set_index('date', inplace=True)
-        _df.sort_index(inplace=True)
-
 else:
-    #stage 0: gets the data from server. (working)
     print("Building data from database…")
-    print("Loading daily stock data for all symbols:")
     df_main = model_to_dataframe(DailyStockData)
-    df_train, df_val, df_test = split_dataframe_by_dates(df_main)
-    df_train['date'] = pd.to_datetime(df_train['date'])
-    df_train.set_index('date', inplace=True)
-    df_train.sort_values(by=['symbol', 'date'], inplace=True)
-
-    stocks_num = len(df_train)
-    print(stocks_num) #here just to make sure it worked
-
-    print("Loading snp data:")
     df_sp500 = model_to_dataframe(SP500Index)
-    df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
-    df_sp500_train['date'] = pd.to_datetime(df_sp500_train['date'])
-    df_sp500_train.set_index('date', inplace=True)
-    df_sp500_train.sort_index(inplace=True)
+    # Save the raw data for next time
     df_main.to_parquet(CP_MAIN)
     df_sp500.to_parquet(CP_SP500)
+
+# --- ALL PROCESSING NOW HAPPENS ONCE ---
+
+# 1. Split data into train/val/test sets
+df_train, df_val, df_test = split_dataframe_by_dates(df_main)
+df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
+
+# 2. Set datetime index for the training data
+for _df in (df_train, df_sp500_train):
+    if 'date' in _df.columns:
+        _df['date'] = pd.to_datetime(_df['date'])
+        _df.set_index('date', inplace=True)
+    _df.sort_index(inplace=True)
+
+# 3. Calculate end dates for all stocks (from original, unaligned data)
+print("Calculating end dates for each stock...")
+end_dates = {}
+grouped = df_train.groupby('symbol')
+for symbol, group_df in grouped:
+    end_dates[symbol] = group_df.index.max()
+print("End dates calculation complete.")
+
+# 4. Align all stock data to the master index
+print("Aligning all stock data to the S&P 500 master index...")
+aligned_stock_dfs = {}
+master_index = df_sp500_train.index
+# Note: Using the same 'grouped' object from step 3
+for symbol, group_df in list(grouped)[:-1]: # <-------------- Change  for a full run
+    aligned_df = group_df.reindex(master_index)
+    # Forward-fill NaN values to prevent broker errors
+    aligned_df.fillna(method='ffill', inplace=True)
+    aligned_stock_dfs[symbol] = aligned_df
+print(f"Data alignment complete. {len(aligned_stock_dfs)} stocks aligned.")
+
 # --- Data Verification Log ---
 # --- Data Verification Log ---
 print("\n--- Data Date Verification ---")
@@ -81,17 +95,15 @@ print(f"Latest date in Stock Data (df_train):   {df_train.index.max().date()}")
 print(f"Earliest date in S&P 500 Data (df_sp500_train): {df_sp500_train.index.min().date()}")
 print(f"Latest date in S&P 500 Data (df_sp500_train):   {df_sp500_train.index.max().date()}")
 print("----------------------------\n")
-
 #%%
 #stage 1: clean &split the data
 #stage 2: define cerebro
     # i)add data feeds
 if __name__ == '__main__':
-    # Initialize the engine
+    print("Aligning all stock data to the S&P 500 master index...")
     cerebro = bt.Cerebro()
     print("Cerebro engine initialized.")
-    grouped = df_train.groupby('symbol') #individual data feeds
-    for symbol, data in list(grouped)[:20]: #<----------when running for real, change here the 20 stocks limitation. 
+    for symbol, data in aligned_stock_dfs.items(): #<----------    when running for real, change here the 20 stocks limitation. 
         stock_feed = bt.feeds.PandasData(dataname=data, plot = False)
         cerebro.adddata(stock_feed, name=symbol)
 
@@ -101,22 +113,23 @@ if __name__ == '__main__':
     cerebro.adddata(sp500_feed, name='sp500_feed')
     print("All data feeds have been loaded into Cerebro.")
     #ii)add strategy
-    cerebro.addstrategy(MyStrategy, beta_period=252, beta_short_window=20) #around 250 trading days per year
+    cerebro.addstrategy(MyStrategy, beta_period=252, beta_short_window=20, end_dates = end_dates) #around 250 trading days per year
     print("Strategy has been added to Cerebro.")
-    #iii)set Broker
+    #iii)set Broker & trading rules
     initial_cash = 100000.0
     cerebro.broker.setcash(initial_cash)
     cerebro.broker.setcommission(commission=0)
+    cerebro.addsizer(bt.sizers.PercentSizer, percents=1) #1 percent invest at each buy
     print(f"Initial portfolio value set to: ${initial_cash:,.2f}")
     # iv) adding Analyzers
-    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe_ratio')
-    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.addobserver(bt.observers.Value)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trade_analyzer')
-    cerebro.addanalyzer(bt.analyzers.PyFolio, _name='equity')
-    print("Performance analyzers have been added.")
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe_ratio', timeframe=bt.TimeFrame.Days, compression=252, riskfreerate=0.0)
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
     # v) backtesting
     print("\n--- Starting Backtest ---")
-    results = cerebro.run()
+    results = cerebro.run(runonce=False)
     print("--- Backtest Finished ---")
     # vi) processing results
     final_strategy_results = results[0]
