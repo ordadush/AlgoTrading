@@ -23,7 +23,6 @@ from ophir.strategy import *
 from ophir.utils import *
 from ophir.utils import split_dataframe_by_dates
 import matplotlib
-from pandas.tseries.offsets import BDay
 matplotlib.use('TkAgg') 
 #added coloumn (variable class)
 class SP500IndexWithScore(bt.feeds.PandasData): #bt pseudo constructor
@@ -71,7 +70,7 @@ print("Calculating end dates for each stock...")
 end_dates = {}
 grouped = df_train.groupby('symbol')
 for symbol, group_df in grouped:
-    end_dates[symbol] = min(group_df.index.max(), pd.Timestamp('2021-01-01'))-BDay(1)
+    end_dates[symbol] = group_df.index.max()
 print("End dates calculation complete.")
 
 # 4. Align all stock data to the master index

@@ -46,6 +46,7 @@ class MyStrategy(bt.Strategy):
         print("--- Strategy Initialization Complete ---")
   
     def next(self):
+        print(self.datetime.date(0),'Portfolio value:', self.broker.getvalue())
         for d in self.datas[:-1]:
             stock_symbol = d._name
             if self.orders_by_stock.get(stock_symbol):
@@ -63,12 +64,12 @@ class MyStrategy(bt.Strategy):
                     self.sell(data=d)
                     continue  # Done with this stock for today
                 # Exit Condition 2: Regular sell based on indicator signal
-                # 
+                # sell
                 if len(d) > self.p.beta_period:
                     beta_val_recent = self.beta_indicators[stock_symbol].beta_index_recent[0]
-                    if beta_val_recent < 0.2:
+                    if 1 < 0:
                         print(f'{d.datetime.date(0)} - SELL SIGNAL for {stock_symbol}, Recent Beta Index: {beta_val_recent:.2f}')
-                        self.orders_by_stock[stock_symbol] = self.sell(data=d)                
+                        self.orders_by_stock[stock_symbol] = self.sell(data=d)   #stop loss             
                 continue
             if len(d) <= self.p.beta_period:
                 continue
@@ -78,6 +79,7 @@ class MyStrategy(bt.Strategy):
             if (betaIdx > 0.5 and betaIdxRecent > 0.5):
                 print(f'{d.datetime.date(0)} - BUY SIGNAL for {stock_symbol}, Beta Index: {betaIdx:.2f}, Recent Beta Index: {betaIdxRecent:.2f}')
                 self.orders_by_stock[stock_symbol] = self.buy(data=d)
+                self.sell(data=d, parent = self.orders_by_stock[stock_symbol], exectype=bt.Order.StopTrail, trailpercent=0.08)
                 
                 
     def notify_order(self, order):

@@ -10,6 +10,9 @@ import seaborn as sns
 from tqdm import tqdm
 import matplotlib.style as style
 from ophir.utils import *
+import plotly.express as px
+import plotly.express as px
+import plotly.io as pio
 
 def calculate_beta_index(df: pd.DataFrame, window: int = 250):
     """
@@ -78,18 +81,7 @@ if use_cp:
     df_main  = pd.read_parquet(CP_MAIN)
     df_sp500 = pd.read_parquet(CP_SP500)
     beta_df = pd.read_parquet(CP_BETA)
-    # # recreate derived frames
-    # df_train, df_val, df_test = split_dataframe_by_dates(df_main)
-    # df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
-
-    # # restore indexes exactly as in the build path
-    # for _df in (df_train, df_sp500_train):
-    #     _df['date'] = pd.to_datetime(_df['date'])
-    #     _df.set_index('date', inplace=True)
-    #     _df.sort_index(inplace=True)
     
-    
-
 else:
     #stage 0: gets the data from server. (working)
     print("Building data from database…")
@@ -113,20 +105,15 @@ else:
     df_sp500.to_parquet(CP_SP500)
     beta_df = calc_beta_grouped(df_train,250)
     beta_df.to_parquet(CP_BETA)
-#%%
-start_date = pd.to_datetime('2013-01-01')
-end_date = pd.to_datetime('2021-01-01')
-#small range sanity block
-# first_20_symbols = df_main['symbol'].drop_duplicates().head(20).tolist()
-# df_20_stocks = df_main[df_main['symbol'].isin(first_20_symbols)].sort_index()
-# df_filtered_by_date = df_20_stocks[(df_20_stocks.index >= start_date) & (df_20_stocks.index <= end_date)]
-# trading_days = df_sp500[(df_sp500.index >= start_date) & (df_sp500.index <= end_date)].index
-# df_filtered_by_date = df_20_stocks.loc[start_date:end_date]
-# df_filtered_by_date = df_train.loc[start_date:end_date]
 
 
+
+
+
+beta_df.to_csv('beta_df.csv', index=True)
+
 #%%
-#statistical analysis and presentation -  regular
+# statistical analysis and presentation -  regular
 # desc_stats = beta_df['beta_index'].describe()
 # print(desc_stats)
 
@@ -152,28 +139,30 @@ end_date = pd.to_datetime('2021-01-01')
 # plt.tight_layout()
 # plt.show()
 
-beta_df['beta_index_ranked'] = beta_df.groupby('date')['beta_index'].rank(pct=True)
-desc_stats_ranked = beta_df['beta_index_ranked'].describe()
-print("beta index - ranked")
-print(desc_stats_ranked)
-print("\nPlotting distribution of RANKED Beta Index...")
-plt.style.use('seaborn-v0_8-whitegrid')
-fig, ax = plt.subplots(figsize=(14, 7))
 
-sns.histplot(beta_df['beta_index_ranked'], bins=100, kde=False, ax=ax, label='Ranked Beta Index Distribution')
+#statistical analysis ranked:
+# beta_df['beta_index_ranked'] = beta_df.groupby('date')['beta_index'].rank(pct=True)
+# desc_stats_ranked = beta_df['beta_index_ranked'].describe()
+# print("beta index - ranked")
+# print(desc_stats_ranked)
+# print("\nPlotting distribution of RANKED Beta Index...")
+# plt.style.use('seaborn-v0_8-whitegrid')
+# fig, ax = plt.subplots(figsize=(14, 7))
 
-# 
-ax.axvline(desc_stats_ranked['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {desc_stats_ranked['mean']:.2f}")
-ax.axvline(desc_stats_ranked['50%'], color='orange', linestyle='-', linewidth=2, label=f"Median (50%): {desc_stats_ranked['50%']:.2f}")
-ax.axvline(desc_stats_ranked['25%'], color='green', linestyle=':', linewidth=2, label=f"25th Percentile: {desc_stats_ranked['25%']:.2f}")
-ax.axvline(desc_stats_ranked['75%'], color='purple', linestyle=':', linewidth=2, label=f"75th Percentile: {desc_stats_ranked['75%']:.2f}")
+# sns.histplot(beta_df['beta_index_ranked'], bins=100, kde=False, ax=ax, label='Ranked Beta Index Distribution')
+
+# # 
+# ax.axvline(desc_stats_ranked['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {desc_stats_ranked['mean']:.2f}")
+# ax.axvline(desc_stats_ranked['50%'], color='orange', linestyle='-', linewidth=2, label=f"Median (50%): {desc_stats_ranked['50%']:.2f}")
+# ax.axvline(desc_stats_ranked['25%'], color='green', linestyle=':', linewidth=2, label=f"25th Percentile: {desc_stats_ranked['25%']:.2f}")
+# ax.axvline(desc_stats_ranked['75%'], color='purple', linestyle=':', linewidth=2, label=f"75th Percentile: {desc_stats_ranked['75%']:.2f}")
 
 
-# titles
-ax.set_title('Distribution of Ranked Beta Index (Relative Strength)', fontsize=16)
-ax.set_xlabel('Beta Index Ranked Value (0.0 to 1.0)', fontsize=12)
-ax.set_ylabel('Frequency', fontsize=12)
-ax.legend()
-plt.tight_layout()
-plt.show()
+# # titles
+# ax.set_title('Distribution of Ranked Beta Index (Relative Strength)', fontsize=16)
+# ax.set_xlabel('Beta Index Ranked Value (0.0 to 1.0)', fontsize=12)
+# ax.set_ylabel('Frequency', fontsize=12)
+# ax.legend()
+# plt.tight_layout()
+# plt.show()
 
