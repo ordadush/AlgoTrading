@@ -76,21 +76,24 @@ CHECKPOINT_DIR = "data_cache" # checkpoints
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CP_MAIN = os.path.join(CHECKPOINT_DIR, "df_main.parquet")
 CP_SP500 = os.path.join(CHECKPOINT_DIR, "df_sp500.parquet")
-use_cp = os.path.exists(CP_MAIN) and os.path.exists(CP_SP500)
+CP_BETA = os.path.join(CHECKPOINT_DIR, "beta_df.parquet")
+use_cp = os.path.exists(CP_MAIN) and os.path.exists(CP_SP500) and os.path.exists(CP_BETA)
 if use_cp:
     print("Loading data from checkpoints…")
     df_main  = pd.read_parquet(CP_MAIN)
     df_sp500 = pd.read_parquet(CP_SP500)
+    beta_df = pd.read_parquet(CP_BETA)
+    # # recreate derived frames
+    # df_train, df_val, df_test = split_dataframe_by_dates(df_main)
+    # df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
 
-    # recreate derived frames
-    df_train, df_val, df_test = split_dataframe_by_dates(df_main)
-    df_sp500_train, df_sp500_val, df_sp500_test = split_dataframe_by_dates(df_sp500)
-
-    # restore indexes exactly as in the build path
-    for _df in (df_train, df_sp500_train):
-        _df['date'] = pd.to_datetime(_df['date'])
-        _df.set_index('date', inplace=True)
-        _df.sort_index(inplace=True)
+    # # restore indexes exactly as in the build path
+    # for _df in (df_train, df_sp500_train):
+    #     _df['date'] = pd.to_datetime(_df['date'])
+    #     _df.set_index('date', inplace=True)
+    #     _df.sort_index(inplace=True)
+    
+    
 
 else:
     #stage 0: gets the data from server. (working)
@@ -113,6 +116,8 @@ else:
     df_sp500_train.sort_index(inplace=True)
     df_main.to_parquet(CP_MAIN)
     df_sp500.to_parquet(CP_SP500)
+    beta_df = calc_beta_grouped(df_train,250)
+    beta_df.to_parquet(CP_BETA)
 #%%
 start_date = pd.to_datetime('2013-01-01')
 end_date = pd.to_datetime('2021-01-01')
@@ -123,29 +128,55 @@ end_date = pd.to_datetime('2021-01-01')
 # trading_days = df_sp500[(df_sp500.index >= start_date) & (df_sp500.index <= end_date)].index
 # df_filtered_by_date = df_20_stocks.loc[start_date:end_date]
 # df_filtered_by_date = df_train.loc[start_date:end_date]
-beta_df = calc_beta_grouped(df_train,250)
+
+
 #%%
-#statistical analysis and presentation
-desc_stats = beta_df['beta_index'].describe()
-print(desc_stats)
+#statistical analysis and presentation -  regular
+# desc_stats = beta_df['beta_index'].describe()
+# print(desc_stats)
 
 
-print("\nPlotting distribution...")
-plt.style.use('seaborn-v0_8-whitegrid') # Using a nice style
+# print("\nPlotting distribution...")
+# plt.style.use('seaborn-v0_8-whitegrid') # Using a nice style
+# fig, ax = plt.subplots(figsize=(14, 7))
+
+# # The main histogram plot
+# sns.histplot(beta_df['beta_index'], bins=100, kde=True, ax=ax, label='Beta Index Distribution')
+
+# # Adding vertical lines for key statistics
+# ax.axvline(desc_stats['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {desc_stats['mean']:.2f}")
+# ax.axvline(desc_stats['50%'], color='orange', linestyle='-', linewidth=2, label=f"Median (50%): {desc_stats['50%']:.2f}")
+# ax.axvline(desc_stats['25%'], color='green', linestyle=':', linewidth=2, label=f"25th Percentile: {desc_stats['25%']:.2f}")
+# ax.axvline(desc_stats['75%'], color='purple', linestyle=':', linewidth=2, label=f"75th Percentile: {desc_stats['75%']:.2f}")
+
+# # Formatting the plot
+# ax.set_title('Distribution of Beta Index (Window = 250 Days)', fontsize=16)
+# ax.set_xlabel('Beta Index Value', fontsize=12)
+# ax.set_ylabel('Frequency', fontsize=12)
+# ax.legend()
+# plt.tight_layout()
+# plt.show()
+
+beta_df['beta_index_ranked'] = beta_df.groupby('date')['beta_index'].rank(pct=True)
+desc_stats_ranked = beta_df['beta_index_ranked'].describe()
+print("beta index - ranked")
+print(desc_stats_ranked)
+print("\nPlotting distribution of RANKED Beta Index...")
+plt.style.use('seaborn-v0_8-whitegrid')
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# The main histogram plot
-sns.histplot(beta_df['beta_index'], bins=100, kde=True, ax=ax, label='Beta Index Distribution')
+sns.histplot(beta_df['beta_index_ranked'], bins=100, kde=False, ax=ax, label='Ranked Beta Index Distribution')
 
-# Adding vertical lines for key statistics
-ax.axvline(desc_stats['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {desc_stats['mean']:.2f}")
-ax.axvline(desc_stats['50%'], color='orange', linestyle='-', linewidth=2, label=f"Median (50%): {desc_stats['50%']:.2f}")
-ax.axvline(desc_stats['25%'], color='green', linestyle=':', linewidth=2, label=f"25th Percentile: {desc_stats['25%']:.2f}")
-ax.axvline(desc_stats['75%'], color='purple', linestyle=':', linewidth=2, label=f"75th Percentile: {desc_stats['75%']:.2f}")
+# 
+ax.axvline(desc_stats_ranked['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {desc_stats_ranked['mean']:.2f}")
+ax.axvline(desc_stats_ranked['50%'], color='orange', linestyle='-', linewidth=2, label=f"Median (50%): {desc_stats_ranked['50%']:.2f}")
+ax.axvline(desc_stats_ranked['25%'], color='green', linestyle=':', linewidth=2, label=f"25th Percentile: {desc_stats_ranked['25%']:.2f}")
+ax.axvline(desc_stats_ranked['75%'], color='purple', linestyle=':', linewidth=2, label=f"75th Percentile: {desc_stats_ranked['75%']:.2f}")
 
-# Formatting the plot
-ax.set_title('Distribution of Beta Index (Window = 250 Days)', fontsize=16)
-ax.set_xlabel('Beta Index Value', fontsize=12)
+
+# titles
+ax.set_title('Distribution of Ranked Beta Index (Relative Strength)', fontsize=16)
+ax.set_xlabel('Beta Index Ranked Value (0.0 to 1.0)', fontsize=12)
 ax.set_ylabel('Frequency', fontsize=12)
 ax.legend()
 plt.tight_layout()

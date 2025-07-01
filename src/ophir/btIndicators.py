@@ -16,7 +16,6 @@ class BetaIndex(bt.Indicator):
         ('func', lambda b_up, b_down, n_up, n_down, p: 
                  (n_up * b_up - n_down * b_down) / p if p > 0 else 0.0),
     )
-
     def __init__(self):
         # Add a check to ensure short_window is not larger than period
         if self.p.short_window > self.p.period:
