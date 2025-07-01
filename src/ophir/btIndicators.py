@@ -1,91 +1,99 @@
 import backtrader as bt
 import numpy as np
+import pandas as pd
 
-class SupremeBeta(bt.Indicator):
+# premises: data0 = stockFeed, data1 = marketFeed
+class BetaIndex(bt.Indicator):
     """
-    Calculates three beta-related values:
-    - beta_up: Beta calculated only on days the market was up.
-    - beta_down: Beta calculated only on days the market was down.
-    - supreme_beta: A custom function of beta_up and beta_down.
+    An OPTIMIZED version of the BetaIndex indicator.
+    It calculates all values in a single pass to avoid redundant data fetching.
     """
     
-    # 1. Define the output lines of the indicator
-    lines = ('beta_up', 'beta_down', 'supreme_beta',)
-
-    # 2. Define the parameters the indicator will accept
+    lines = ('beta_up', 'beta_down', 'beta_index', 'beta_index_recent',)
     params = (
-        ('period', 60),  # 'w' - The lookback window
-        # 'f' - The custom function. Default is a simple average.
-        ('func', lambda up, down: (up + down) / 2.0),
+        ('period', 360),
+        ('short_window', 20),
+        ('func', lambda b_up, b_down, n_up, n_down, p: 
+                 (n_up * b_up - n_down * b_down) / p if p > 0 else 0.0),
     )
 
     def __init__(self):
-        """Indicator initialization"""
-        # data0 is the stock, data1 is the market (sp500_feed)
-        # We need to calculate daily returns to compute beta
-        self.stock_returns = self.data0.close / self.data0.close(-1) - 1
-        self.market_returns = self.data1.close / self.data1.close(-1) - 1
+        # Add a check to ensure short_window is not larger than period
+        if self.p.short_window > self.p.period:
+            raise ValueError("short_window cannot be greater than period")
 
     def _calculate_beta(self, stock_returns, market_returns):
-        """
-        Helper function to calculate beta from lists of returns.
-        Beta = Covariance(stock, market) / Variance(market)
-        """
-        # Beta calculation requires at least 2 data points
+        """Helper function to calculate a single beta value from pandas Series."""
         if len(market_returns) < 2:
-            return 0.0  # Not enough data for calculation
-
-        # Convert lists to numpy arrays for statistical calculations
-        s_returns = np.array(stock_returns)
-        m_returns = np.array(market_returns)
-
-        # Calculate variance of the market. Handle the case of zero variance.
-        market_variance = np.var(m_returns)
+            return 0.0
+        market_variance = market_returns.var()
         if market_variance == 0:
-            return 0.0  # Cannot divide by zero, no market movement
-
-        # Calculate covariance between stock and market
-        # The covariance matrix is [[var(s), cov(s,m)], [cov(m,s), var(m)]]
-        covariance = np.cov(s_returns, m_returns)[0][1]
-
-        # Calculate Beta
+            return 0.0
+        covariance = stock_returns.cov(market_returns)
         beta = covariance / market_variance
         return beta
 
     def next(self):
-        """Main calculation loop, runs on each bar."""
-        # Wait until we have enough data for the full period
+        """
+        Main calculation loop. This version is fully optimized.
+        It fetches data once and performs all calculations on the same DataFrame.
+        """
+        # We only need to run if we have enough data for the long window
         if len(self.data0) < self.p.period:
             return
 
-        # Prepare lists to hold returns for up-days and down-days
-        stock_returns_up_days = []
-        market_returns_up_days = []
-        stock_returns_down_days = []
-        market_returns_down_days = []
+        # 1. Fetch data ONCE for the long window
+        stock_close_window = self.data0.close.get(size=self.p.period)
+        market_close_window = self.data1.close.get(size=self.p.period)
 
-        # Loop backwards over the defined period (w)
-        for i in range(self.p.period):
-            # Get the market return for the i-th day back
-            market_return_i = self.market_returns[-i]
-            stock_return_i = self.stock_returns[-i]
-
-            # Sort returns into up/down lists based on market performance
-            # We consider market up if return > 0
-            if market_return_i > 0:
-                stock_returns_up_days.append(stock_return_i)
-                market_returns_up_days.append(market_return_i)
-            else:
-                stock_returns_down_days.append(stock_return_i)
-                market_returns_down_days.append(market_return_i)
-
-        # Calculate beta for up-days and down-days using the helper function
-        b_up = self._calculate_beta(stock_returns_up_days, market_returns_up_days)
-        b_down = self._calculate_beta(stock_returns_down_days, market_returns_down_days)
+        # 2. Create the main DataFrame
+        df = pd.DataFrame({
+            'stock_close': stock_close_window,
+            'market_close': market_close_window
+        })
         
-        # Set the values for the output lines for the current bar
-        self.lines.beta_up[0] = b_up
-        self.lines.beta_down[0] = b_down
+        # 3. Calculate log returns for the entire window
+        df['stock_ret'] = np.log(df['stock_close'] / pd.Series(df['stock_close']).shift(1))
+        df['market_ret'] = np.log(df['market_close'] / pd.Series(df['market_close']).shift(1))
+
+        # --- A. CALCULATE FOR THE LONG-TERM WINDOW ---
         
-        # Apply the custom function 'f' to calculate supreme_beta
-        self.lines.supreme_beta[0] = self.p.func(b_up, b_down)
+        # 4a. Create mask and filter for the long window (uses the whole df)
+        is_market_up_long = df['market_ret'] > 0
+        up_stock_long = df.loc[is_market_up_long, 'stock_ret']
+        up_market_long = df.loc[is_market_up_long, 'market_ret']
+        down_stock_long = df.loc[~is_market_up_long, 'stock_ret']
+        down_market_long = df.loc[~is_market_up_long, 'market_ret']
+
+        # 5a. Calculate long-term betas and index
+        b_up_long = self._calculate_beta(up_stock_long, up_market_long)
+        b_down_long = self._calculate_beta(down_stock_long, down_market_long)
+        index_long = self.p.func(
+            b_up_long, b_down_long, len(up_market_long), len(down_market_long), self.p.period
+        )
+
+        # --- B. CALCULATE FOR THE SHORT-TERM WINDOW ---
+
+        # 4b. Create a smaller DataFrame for the short window by taking the 'tail'.
+        # This REUSES the existing data and avoids fetching again.
+        df_short = df.tail(self.p.short_window)
+        
+        # 5b. Create mask and filter for the short window
+        is_market_up_short = df_short['market_ret'] > 0
+        up_stock_short = df_short.loc[is_market_up_short, 'stock_ret']
+        up_market_short = df_short.loc[is_market_up_short, 'market_ret']
+        down_stock_short = df_short.loc[~is_market_up_short, 'stock_ret']
+        down_market_short = df_short.loc[~is_market_up_short, 'market_ret']
+
+        # 6b. Calculate short-term betas and index
+        b_up_short = self._calculate_beta(up_stock_short, up_market_short)
+        b_down_short = self._calculate_beta(down_stock_short, down_market_short)
+        index_short = self.p.func(
+            b_up_short, b_down_short, len(up_market_short), len(down_market_short), self.p.short_window
+        )
+        
+        # --- C. SET ALL OUTPUT LINES ---
+        self.lines.beta_up[0] = b_up_long
+        self.lines.beta_down[0] = b_down_long
+        self.lines.beta_index[0] = index_long
+        self.lines.beta_index_recent[0] = index_short
