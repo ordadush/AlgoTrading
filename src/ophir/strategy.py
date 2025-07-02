@@ -26,8 +26,8 @@ class RelativeBIDX(bt.Strategy):
         print("--- Initializing Multi-Stock Strategy ---")
         print(f"self.p.beta_period = {self.p.beta_period}")
         # print(f"self.p.beta_short_window = {self.p.beta_short_window}")
-        print(f"self.p.high_percent = {self.p.high_percent}")
-        print(f"self.p.low_percent = {self.p.low_percent}")
+        print(f"self.p.high_percent = {self.p.low_percentage}")
+        print(f"self.p.low_percent = {self.p.low_percentage}")
         print("------------------------------------------")
         self.market_feed = self.datas[-1] #Market feed enters last.
         self.stock_feeds = self.datas[:-1]
