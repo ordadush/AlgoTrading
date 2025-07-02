@@ -113,7 +113,7 @@ if __name__ == '__main__':
     cerebro.adddata(sp500_feed, name='sp500_feed')
     print("All data feeds have been loaded into Cerebro.")
     #ii)add strategy
-    cerebro.addstrategy(MyStrategy, beta_period=252, beta_short_window=20, end_dates = end_dates) #around 250 trading days per year
+    cerebro.addstrategy(RelativeBIDX, beta_period=252, beta_short_window=20, end_dates = end_dates) #around 250 trading days per year
     print("Strategy has been added to Cerebro.")
     #iii)set Broker & trading rules
     initial_cash = 100000.0

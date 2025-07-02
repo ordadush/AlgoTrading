@@ -13,6 +13,7 @@ from ophir.utils import *
 import plotly.express as px
 import plotly.express as px
 import plotly.io as pio
+from pathlib import Path
 
 def calculate_beta_index(df: pd.DataFrame, window: int = 250):
     """
@@ -69,8 +70,9 @@ def calculate_beta_index(df: pd.DataFrame, window: int = 250):
         res['num_up'] * res['beta_pos'] - res['num_down'] * res['beta_neg']
     ) / window
     return df
-
+######################################################################
 CHECKPOINT_DIR = "data_cache" # checkpoints
+STAT_DIR = "statistics"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CP_MAIN = os.path.join(CHECKPOINT_DIR, "df_main.parquet")
 CP_SP500 = os.path.join(CHECKPOINT_DIR, "df_sp500.parquet")
@@ -103,14 +105,123 @@ else:
     df_sp500_train.sort_index(inplace=True)
     df_main.to_parquet(CP_MAIN)
     df_sp500.to_parquet(CP_SP500)
-    beta_df = calc_beta_grouped(df_train,250)
+    beta_df = calc_beta_grouped(df_train,250) #<----- Window
     beta_df.to_parquet(CP_BETA)
+    
+#====================================================================================    
+#variense of beta_index
+# if 'date' not in beta_df.columns:
+#     # date is the index → reset
+#     beta_df = beta_df.reset_index(names='date')
+
+# beta_df['date'] = pd.to_datetime(beta_df['date'])
+# beta_df = beta_df.sort_values(['symbol', 'date'])
+
+# # --------------------------------------------------------------------
+# # >>> 2.  per-symbol volatility (std-dev) of the β-index
+# # --------------------------------------------------------------------
+# vol_table = (
+#     beta_df.groupby('symbol')['beta_index']
+#            .std(ddof=0)                 # population σ
+#            .rename('beta_vol')
+#            .to_frame()
+# )
+
+# mean_vol   = vol_table['beta_vol'].mean()
+# median_vol = vol_table['beta_vol'].median()
+
+# print("\n=== β-index volatility per symbol ===")
+# print(f"mean   σ(β) : {mean_vol:.4f}")
+# print(f"median σ(β) : {median_vol:.4f}\n")
+# print(vol_table.sort_values('beta_vol').head(10)
+#                .to_string(float_format='%.4f'))
+
+# # --------------------------------------------------------------------
+# # >>> 3.  histogram for a quick visual check
+# #      (shows automatically in VS-Code / Jupyter)
+# # --------------------------------------------------------------------
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(9,5))
+# plt.hist(vol_table['beta_vol'], bins=40, edgecolor='k', alpha=0.75)
+# plt.axvline(mean_vol,   ls='--', c='red',    label=f"mean {mean_vol:.3f}")
+# plt.axvline(median_vol, ls=':',  c='orange', label=f"median {median_vol:.3f}")
+# plt.title("Distribution of β-index volatility (per symbol):250 days")
+# plt.xlabel("σ(β-index)  over entire sample")
+# plt.ylabel("Number of symbols")
+# plt.legend()
+# plt.tight_layout()
+# plt.show()
+
+
+
+g = beta_df.groupby('symbol')['beta_index']
+stats = (
+    pd.DataFrame({
+        'sigma' : g.std(),
+        'mean'  : g.mean(),
+        'cv'    : g.std() / g.mean().abs(),
+        'autocorr1': g.apply(lambda s: s.autocorr(1)),
+    })
+    .dropna()
+)
+
+# "alpha": avg return: 90 FWD days forward
+FWD = 90
+beta_df['ret_fwd'] = beta_df.groupby('symbol')['return_daily'].shift(-FWD).rolling(FWD).sum()
+
+def alpha_on_extremes(sub):
+    lo, hi = sub['beta_index'].quantile([0.05, 0.95])
+    mask = (sub['beta_index'] < lo) | (sub['beta_index'] > hi)
+    return sub.loc[mask, 'ret_fwd'].mean()
+
+stats['alpha'] = beta_df.groupby('symbol').apply(alpha_on_extremes)
+
+# ==== 2. שומרים ל-CSV ====
+CSV_STATS = os.path.join(CHECKPOINT_DIR, "beta_stats_per_symbol.csv")
+stats.to_csv(CSV_STATS)
+print(f"symbol-level stats saved: {CSV_STATS}")
+
+# ==== 3. תצוגה תלת-ממדית אינטראקטיבית ====
+fig = px.scatter_3d(
+    stats.reset_index(),
+    x='sigma',
+    y='cv',         # <-- הוחלף
+    z='alpha',      # <-- הוחלף, זהו כעת הציר האנכי
+    hover_name='symbol',
+    title='Predictive Power (α) vs Stability (σ) vs CV: returns computed 90 days forward.'
+)
+#to run:start data_cache\beta_3d_plot_alpha.html
+# עדכון כותרות הצירים כדי לשקף את השינוי
+fig.update_layout(scene = dict(
+                    xaxis_title='Sigma (σ) - Stability',
+                    yaxis_title='CV - Relative Volatility',
+                    zaxis_title='Alpha (α) - Predictive Power'))
+
+
+HTML_PATH = os.path.join(CHECKPOINT_DIR, 'beta_3d_plot_alpha_vertical.html')
+pio.write_html(fig, file=HTML_PATH, auto_open=False)
+print(f"Interactive 3-D plot saved to: {HTML_PATH}")
 
 
 
 
 
-beta_df.to_csv('beta_df.csv', index=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #%%
 # statistical analysis and presentation -  regular
