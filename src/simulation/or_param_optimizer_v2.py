@@ -17,7 +17,7 @@ from __future__ import annotations
 import itertools, os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, DefaultDict
 
 import numpy as np
 import pandas as pd
@@ -112,7 +112,7 @@ def build_signals(start:str,end:str,p:ParamSet)->pd.DataFrame:
     betas=pd.read_parquet(Path("data_cache")/"beta_calculation.parquet")
     betas=betas[(betas["date"]>=start)&(betas["date"]<=end)]
     up, dn = f"beta_up_{p.window}", f"beta_down_{p.window}"
-    m_long,m_short=defaultdict(list),defaultdict(list)
+    m_long,m_short=DefaultDict(list),DefaultDict(list)
     for _,r in betas.iterrows():
         if r[up]>=p.th_up and r[dn]<=p.th_dn_lo:
             m_long[pd.Timestamp(r["date"])].append(r["symbol"])

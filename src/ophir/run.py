@@ -12,7 +12,7 @@ from DBintegration.models import DailyStockData
 from DBintegration.models import SP500Index# or any other model you want to use
 from DBintegration.models import *
 from pathlib import Path
-from Indicators.df_utils import count_symbols
+#from Indicators.df_utils import count_symbols
 from DBintegration.db_utils import *
 from sqlalchemy.orm import sessionmaker
 import backtrader as bt
@@ -131,6 +131,17 @@ if __name__ == '__main__':
     # v) backtesting
     print("\n--- Starting Backtest ---")
     results = cerebro.run(runonce=False)
+    
+    # הוספה בסיום קובץ run.py
+    portfolio_values = final_strategy_results.analyzers.returns.get_analysis().get('rlogret', [])
+    dates = df_sp500_train.index[:len(portfolio_values)]
+    df_returns = pd.DataFrame({
+        'Date': dates,
+        'Cumulative_Return': pd.Series(portfolio_values).cumsum()
+    })
+    df_returns['Portfolio_Value'] = initial_cash * (1 + df_returns['Cumulative_Return'])
+    df_returns.to_csv('strategy_pnl.csv', index=False)
+    print("Saved cumulative PnL to strategy_pnl.csv")
     print("--- Backtest Finished ---")
     # vi) processing results
     final_strategy_results = results[0]
@@ -155,3 +166,164 @@ if __name__ == '__main__':
     # -Ploting.
     print("\nGenerating plot...")
     cerebro.plot(style='candlestick', barup='green', bardown='red')
+
+
+
+# ------------------------------------------------------------
+# run.py   –   Back-test 01-01-2019 … 31-12-2024
+# ------------------------------------------------------------
+# הפעלה:  python run.py   (אחרי הפעלת -venv והתקנת requirements)
+
+# import sys, os
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# from DBintegration.models import DailyStockData, SP500Index
+# from DBintegration.db_utils import model_to_dataframe
+# from pandas.tseries.offsets import BDay
+# import backtrader as bt
+# import pandas as pd
+# import numpy as np
+# import matplotlib
+# matplotlib.use('TkAgg')
+
+# # =======  STRATEGY / INDICATORS  ============================================
+# from Or_Ofir_stragety.strategy     import MyStrengthStrat        # ← שלך
+# from Or_Ofir_stragety.btIndicators import *                      # אם נדרש
+# # ============================================================================
+
+
+# # ---------- 0.  קבועים ------------------------------------------------------
+# START_DATE = pd.Timestamp("2019-01-01")
+# END_DATE   = pd.Timestamp("2024-12-31")
+# CHECKPOINT_DIR = "data_cache"
+# CP_MAIN  = os.path.join(CHECKPOINT_DIR, "df_main.parquet")
+# CP_SP500 = os.path.join(CHECKPOINT_DIR, "df_sp500.parquet")
+# os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+
+# # ---------- 1.  טעינת נתונים -----------------------------------------------
+# def load_data():
+#     """מחזיר (df_main, df_sp500) אחרי סינון לטווח-התאריכים."""
+#     if os.path.exists(CP_MAIN) and os.path.exists(CP_SP500):
+#         print("Loading data from checkpoints …")
+#         df_main  = pd.read_parquet(CP_MAIN)
+#         df_sp500 = pd.read_parquet(CP_SP500)
+#     else:
+#         print("Building data from DB …")
+#         df_main  = model_to_dataframe(DailyStockData)
+#         df_sp500 = model_to_dataframe(SP500Index)
+#         df_main.to_parquet(CP_MAIN);  df_sp500.to_parquet(CP_SP500)
+
+#     # --- חיתוך הטווח המבוקש -------------------------------------------------
+#     mask_main  = (df_main ['date'] >= START_DATE) & (df_main ['date'] <= END_DATE)
+#     mask_sp500 = (df_sp500['date'] >= START_DATE) & (df_sp500['date'] <= END_DATE)
+#     df_main  = df_main .loc[mask_main ].reset_index(drop=True)
+#     df_sp500 = df_sp500.loc[mask_sp500].reset_index(drop=True)
+
+#     return df_main, df_sp500
+
+
+# df_main, df_sp500 = load_data()
+
+# # ---------- 2.  Index → DatetimeIndex  --------------------------------------
+# for _df in (df_main, df_sp500):
+#     _df['date'] = pd.to_datetime(_df['date'])
+#     _df.set_index('date', inplace=True)
+#     _df.sort_index(inplace=True)
+
+# # ---------- 3.  יצירת end_dates לכל מניה ------------------------------------
+# print("Calculating end-dates …")
+# end_dates = {sym: min(g.index.max(), END_DATE) - BDay(1)
+#              for sym, g in df_main.groupby('symbol')}
+
+# # ---------- 4.  יישור כל המניות ללוח-שנה של S&P-500 -------------------------
+# master_index      = df_sp500.index
+# aligned_stock_dfs = {}
+# for sym, g in df_main.groupby('symbol'):
+#     aligned = g.reindex(master_index)
+#     aligned.ffill(inplace=True)        # fill holes
+#     aligned_stock_dfs[sym] = aligned
+# print(f"Aligned {len(aligned_stock_dfs)} stocks to master index.\n")
+
+
+# # ---------- 5.  Backtrader – feeds ------------------------------------------
+# class SP500Feed(bt.feeds.PandasData):
+#     """Adds ‘score’ line (col #6) לטובת האינדיקטור."""
+#     lines = ('score',)
+#     params = (('score', 6),)
+
+
+# cerebro = bt.Cerebro(stdstats=False)
+# print("Cerebro initialised.")
+
+# #   • מניות
+# for sym, data in aligned_stock_dfs.items():
+#     cerebro.adddata(bt.feeds.PandasData(dataname=data, plot=False), name=sym)
+
+# #   • מדד S&P-500
+# cerebro.adddata(SP500Feed(dataname=df_sp500), name='sp500_feed')
+# print("Feeds loaded.")
+
+
+# # ---------- 6.  אסטרטגיה + אנלייזרים ---------------------------------------
+# cerebro.addstrategy(
+#     MyStrengthStrat,
+#     end_dates=end_dates,
+#     strength_thresh_long = 0.2,
+#     strength_thresh_short=-0.12,
+#     stop_loss_pct  = 0.02,
+#     take_profit_pct= 0.02,
+#     max_daily_buys = 10,
+#     cooldown       = 5
+# )
+
+# cerebro.addobserver(bt.observers.Value)
+# cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='ta')
+# cerebro.addanalyzer(bt.analyzers.DrawDown,      _name='dd')
+# cerebro.addanalyzer(bt.analyzers.TimeReturn,
+#                     _name='daily_ret',
+#                     timeframe=bt.TimeFrame.Days)
+
+# # ---------- 7.  ברוקר -------------------------------------------------------
+# cerebro.broker.setcash(100_000.0)
+# cerebro.broker.setcommission(commission=0.0)
+# cerebro.addsizer(bt.sizers.PercentSizer, percents=1)
+
+# # ---------- 8.  הרצה --------------------------------------------------------
+# print("\n--- Starting Backtest ---")
+# results = cerebro.run(runonce=False)
+# strat   = results[0]
+# print("--- Backtest Finished ---\n")
+
+
+# # ---------- 9.  תוצאות ------------------------------------------------------
+# ta = strat.analyzers.ta.get_analysis()
+# dd = strat.analyzers.dd.get_analysis()
+
+# total = ta.total.closed if 'closed' in ta.total else 0
+# won   = ta.won.total    if 'won'    in ta         else 0
+# lost  = ta.lost.total   if 'lost'   in ta         else 0
+# pnl   = ta.pnl.net.total if ('pnl' in ta and 'net' in ta.pnl) else 0.0
+
+# print("--- Trade Analysis ---")
+# print(f"Total Trades:   {total}")
+# print(f"Winning trades: {won}")
+# print(f"Losing  trades: {lost}")
+# print(f"Win Rate:       {100*won/total:.2f}%") if total else print("Win Rate: N/A")
+# print(f"Net P/L:        ${pnl:,.2f}")
+
+# print("\n--- Risk Metrics ---")
+# print(f"Max Drawdown:   {dd.max.drawdown:.2f}%")
+# print(f"Max Money DD:   ${dd.max.moneydown:,.2f}")
+
+# # Sharpe (מחישוב ידני)
+# rets = pd.Series(strat.analyzers.daily_ret.get_analysis()).replace(
+#             [np.inf, -np.inf], np.nan).dropna()
+# if len(rets) > 1 and rets.std() != 0:
+#     sharpe = (rets.mean() / rets.std()) * np.sqrt(252)
+#     print(f"\nSharpe Ratio (Annualised): {sharpe:.2f}")
+# else:
+#     print("\nSharpe Ratio: N/A")
+
+# ---------- 10.  (אופציונלי) גרף -------------------------------------------
+#  cerebro.plot(style='candlestick', barup='green', bardown='red')

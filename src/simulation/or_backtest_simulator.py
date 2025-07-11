@@ -39,6 +39,7 @@ class BacktestSimulator:
         self.cash = self.initial_cash
         self.positions: Dict[str, Dict] = {}  # symbol → {entry_price, size}
         self.history = []
+        self.trades = [] 
 
     def _load_stock_prices(self) -> pd.DataFrame:
         """
@@ -65,29 +66,43 @@ class BacktestSimulator:
             # Record account state
             self._record_daily_state(current_date)
 
-    def _get_price(self, date, symbol) -> Optional[float]:
-        """
-        Helper to retrieve close price for specific date/symbol.
-        """
-        try:
-            return self.stock_prices.loc[(date, symbol)]
-        except KeyError:
-            return None
+    def _get_price(self, date, symbol):
+        while date >= self.stock_prices.index.get_level_values(0).min():
+            try:
+                return self.stock_prices.loc[(date, symbol)]
+            except KeyError:
+                date -= pd.Timedelta(days=1)  # fallback ליום קודם
+        return None
 
+        
+    
     def _close_invalid_positions(self, date, signal_row):
         """
         Evaluate open positions and close ones that lost their signal.
+        Records the trade with exit details and PnL.
         """
         to_close = []
-        for symbol in self.positions:
-            long_syms = signal_row["long_symbols"]
-            short_syms = signal_row["short_symbols"]
+        long_syms = signal_row["long_symbols"]
+        short_syms = signal_row["short_symbols"]
+        regime = signal_row.get("regime_signal", 0)
 
-            still_valid = (
-                (symbol in long_syms and self.positions[symbol]["type"] == "long") or
-                (symbol in short_syms and self.positions[symbol]["type"] == "short")
+        for symbol in self.positions:
+            position = self.positions[symbol]
+            side = position["type"]
+
+            # מניה איבדה את הסיגנל שלה (כמו קודם)
+            signal_invalid = (
+                (side == "long" and symbol not in long_syms) or
+                (side == "short" and symbol not in short_syms)
             )
-            if not still_valid:
+
+            # כיוון שוק מתנגד לפוזיציה (חדש)
+            regime_invalid = (
+                (side == "long" and regime not in {1, 2, 0}) or
+                (side == "short" and regime not in {-1, -2, 0})
+            )
+
+            if signal_invalid or regime_invalid:
                 to_close.append(symbol)
 
         for symbol in to_close:
@@ -104,7 +119,21 @@ class BacktestSimulator:
             else:
                 pnl = (entry - exit_price) * qty
 
-            self.cash += (qty * exit_price) + pnl
+            self.cash += qty * exit_price + pnl
+
+            # --- log trade in trade history ---
+            self.trades.append({
+                "symbol": symbol,
+                "side": position["type"],
+                "entry_date": position["entry_date"],
+                "entry_price": entry,
+                "qty": qty,
+                "exit_date": date,
+                "exit_price": exit_price,
+                "pnl": pnl,
+                "sl_hit": False,
+            })
+
 
     def _open_new_positions(self, date, signal_row):
         """
@@ -131,6 +160,7 @@ class BacktestSimulator:
             qty = self.fixed_size / price
             self.positions[symbol] = {
                 "entry_price": price,
+                "entry_date": date,
                 "size": qty,
                 "type": direction
             }
